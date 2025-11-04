@@ -3,7 +3,7 @@
 ## Project Status
 
 ### ✅ Completed
-- **Phase 1**: FULLY IMPLEMENTED AND TESTED
+- **Phase 1**: FULLY IMPLEMENTED AND TESTED ✅
   - Graph data structure with dynamic updates
   - Shortest path (distance & time modes)
   - Time-dependent routing with speed profiles
@@ -11,16 +11,18 @@
   - KNN queries (Euclidean & shortest path metrics)
   - Dynamic graph updates (remove/modify edges)
 
-### 🚧 In Progress
-- **Phase 2**: Structure created, implementation pending
-  - K shortest paths (exact)
-  - K shortest paths (heuristic with diversity)
-  - Approximate shortest paths (batch queries)
+- **Phase 2**: FULLY IMPLEMENTED AND TESTED ✅
+  - K shortest paths (exact - Yen's algorithm)
+  - K shortest paths (heuristic with path diversity)
+  - Approximate shortest paths with landmarks (ALT algorithm)
+  - Batch query processing with time budgets
 
+### 🚧 Pending
 - **Phase 3**: Structure created, implementation pending
   - Delivery scheduling (TSP variant)
   - Pickup/dropoff constraints
   - Multi-driver optimization
+  - Total vs. max delivery time comparison
 
 ## Quick Start
 
@@ -52,32 +54,37 @@ python tests/generate_testcases.py
 
 ```
 CS293_Project/
-├── common/
-│   ├── json.hpp          # nlohmann/json library
-│   ├── Graph.hpp/cpp     # Core graph data structure
-│   └── ...
-├── Phase-1/
-│   ├── main.cpp          # Phase 1 driver
-│   ├── ShortestPath.hpp/cpp
-│   ├── KNN.hpp/cpp
-│   └── ...
-├── Phase-2/
-│   └── main.cpp          # Phase 2 driver (WIP)
-├── Phase-3/
-│   └── main.cpp          # Phase 3 driver (WIP)
+├── Phase-1/                      # Phase 1: Shortest Paths & KNN
+│   ├── main.cpp                  # Driver program
+│   ├── Graph.hpp/cpp             # Graph data structure
+│   ├── ShortestPath.hpp/cpp      # Dijkstra algorithms
+│   ├── KNN.hpp/cpp               # K-nearest neighbors
+│   └── json.hpp                  # JSON library
+├── Phase-2/                      # Phase 2: K-Shortest Paths & Approximate
+│   ├── main.cpp                  # Driver program
+│   ├── Graph.hpp/cpp             # Graph data structure
+│   ├── KShortestPaths.hpp/cpp    # Yen's algorithm & heuristics
+│   ├── ApproxShortestPath.hpp/cpp # A* with landmarks (ALT)
+│   └── json.hpp                  # JSON library
+├── Phase-3/                      # Phase 3: TSP Delivery Scheduling
+│   ├── main.cpp                  # Driver program (skeleton)
+│   ├── Graph.hpp/cpp             # Graph data structure
+│   └── json.hpp                  # JSON library
 ├── tests/
-│   ├── generate_testcases.py
-│   ├── test_graph_1.json
-│   ├── test_queries_1.json
-│   └── output_1.json
-├── Makefile
+│   ├── generate_testcases.py     # Phase 1 test generator
+│   └── generate_testcases_phase2.py # Phase 2 test generator
+├── Makefile                      # Build system (Windows-compatible)
+├── SampleDriver.cpp              # Reference implementation
 └── README.md
 ```
 
-## Phase 1 Features
+**Note**: Each phase is self-contained with all necessary files. No shared `common/` directory as per project specification.
 
-### Implemented Query Types
+## Implemented Features
 
+### Phase 1: Shortest Paths & KNN
+
+**Query Types:**
 1. **Shortest Path Queries**
    - Distance minimization
    - Time minimization (with time-dependent speed profiles)
@@ -94,12 +101,34 @@ CS293_Project/
    - Remove edge (soft delete, can be restored)
    - Modify edge (update properties or restore deleted edges)
 
-### Algorithms Used
+**Algorithms:**
+- Dijkstra's Algorithm (distance mode)
+- Time-Dependent Dijkstra (speed profiles)
+- Priority Queue: O((E + V) log V) complexity
+- POI Indexing: O(1) lookups by type
 
-- **Dijkstra's Algorithm**: Standard shortest path
-- **Time-Dependent Dijkstra**: Handles speed profiles with 15-min slots
-- **Priority Queue Optimization**: O((E + V) log V) complexity
-- **POI Indexing**: Fast lookups by POI type
+### Phase 2: Multiple Paths & Batch Processing
+
+**Query Types:**
+1. **K-Shortest Paths (Exact)**
+   - Yen's algorithm for finding K distinct paths
+   - Guarantees non-overlapping paths
+
+2. **K-Shortest Paths (Heuristic)**
+   - Path diversity optimization
+   - Overlap and deviation penalties
+   - Faster than exact for large K
+
+3. **Approximate Shortest Paths (Batch)**
+   - Processes multiple queries with time budgets
+   - Landmark-based heuristics (ALT algorithm)
+   - Iteration limits for guaranteed termination
+
+**Algorithms:**
+- Yen's K-Shortest Paths: O(K × N(E + V log V))
+- A* with Landmarks (ALT): O(E + V log V) with precomputed landmarks
+- Heuristic Path Scoring: Overlap ratio + distance deviation
+- Batch Processing: Time budget management (e.g., 1000ms for 20 queries)
 
 ## Input/Output Format
 
@@ -158,13 +187,14 @@ CS293_Project/
 
 ## Development Timeline
 
-- **Nov 4, 2025**: Phase 1 implementation completed ✅
-- **Nov 5-7, 2025**: Phase 2 implementation
-- **Nov 8-9, 2025**: Testing and optimization (Phases 1 & 2)
-- **Nov 10, 2025**: **DEADLINE - Phases 1 & 2**
-- **Nov 11-20, 2025**: Phase 3 implementation
-- **Nov 21, 2025**: Final testing and report
-- **Nov 22, 2025**: **DEADLINE - Phase 3**
+- **Nov 4, 2025**: ✅ Phase 1 implementation completed and tested
+- **Nov 4, 2025**: ✅ Phase 2 implementation completed and tested
+- **Nov 4, 2025**: ✅ Directory restructure (removed common/ folder)
+- **Nov 4, 2025**: ✅ Pushed to GitHub repository
+- **Nov 5-9, 2025**: Phase 3 implementation (TSP delivery scheduling)
+- **Nov 10, 2025**: **DEADLINE - Phases 1 & 2** ⏰
+- **Nov 11-20, 2025**: Phase 3 testing, optimization, and report writing
+- **Nov 22, 2025**: **DEADLINE - Phase 3** ⏰
 
 ## Testing
 
@@ -178,20 +208,25 @@ To create additional test cases, modify `tests/generate_testcases.py`.
 
 ## Next Steps
 
-1. **Phase 2 Implementation** (Priority: HIGH)
-   - Implement Yen's K-Shortest Paths algorithm
-   - Design path diversity heuristics
-   - Optimize batch query processing with time budgets
+1. **Phase 3 Implementation** (Priority: URGENT - 6 days to deadline)
+   - Implement TSP delivery scheduling algorithms
+   - Greedy nearest neighbor baseline
+   - 2-opt local search optimization
+   - Handle pickup/dropoff constraints
+   - Multiple delivery driver assignment
+   - Compare total vs max delivery time objectives
 
 2. **Enhanced Testing**
-   - Generate larger graphs (100-1000 nodes)
-   - Stress test with edge cases
-   - Benchmark performance
+   - Generate larger graphs (1,000-10,000 nodes)
+   - Real-world map extraction from OpenStreetMap
+   - Stress test with diverse delivery scenarios
+   - Performance benchmarking
 
-3. **Phase 3 Implementation**
-   - Research TSP heuristics (2-opt, Christofides, genetic algorithms)
-   - Implement pickup/dropoff constraints
-   - Compare total vs max delivery time objectives
+3. **Project Report**
+   - Document implementation details
+   - Time and space complexity analysis
+   - Real-world test case analysis
+   - Include AI interaction logs
 
 ## Notes
 
