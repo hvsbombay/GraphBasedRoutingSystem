@@ -1,0 +1,18 @@
+# Compiled executables
+*.exe
+*.out
+
+# Object files
+*.o
+*.obj
+
+# PDF and temporary files
+*.pdf
+
+# VS Code settings
+.vscode/
+
+# Test outputs
+tests/output/
+tests/*.json
+tests/*.txt
