@@ -180,60 +180,64 @@ vector<PathInfo> KShortestPaths::findKShortestPaths(int source, int target, int 
 }
 
 double KShortestPaths::calculateOverlap(const vector<int>& path1, const vector<int>& path2) {
-    unordered_set<int> nodes1(path1.begin(), path1.end());
-    int overlap_count = 0;
+    // Calculate edge overlap percentage
+    set<pair<int,int>> edges1;
+    for (size_t i = 0; i < path1.size() - 1; i++) {
+        edges1.insert({min(path1[i], path1[i+1]), max(path1[i], path1[i+1])});
+    }
     
-    for (int node : path2) {
-        if (nodes1.count(node)) {
+    int overlap_count = 0;
+    for (size_t i = 0; i < path2.size() - 1; i++) {
+        pair<int,int> edge = {min(path2[i], path2[i+1]), max(path2[i], path2[i+1])};
+        if (edges1.count(edge)) {
             overlap_count++;
         }
     }
     
-    // Normalize by the size of the smaller path
-    return (double)overlap_count / min(path1.size(), path2.size());
+    // Return percentage of edges that overlap
+    if (path2.size() <= 1) return 0.0;
+    return (double)overlap_count * 100.0 / (path2.size() - 1);
 }
 
 double KShortestPaths::calculateDeviation(double path_length, double shortest_length) {
     if (shortest_length == 0.0) return 0.0;
-    return (path_length - shortest_length) / shortest_length;
+    return ((path_length - shortest_length) * 100.0 / shortest_length); // Percentage difference
 }
 
 vector<PathInfo> KShortestPaths::findKShortestPathsHeuristic(int source, int target, int k,
-                                                             double overlap_penalty,
-                                                             double distance_penalty) {
+                                                             double overlap_threshold) {
     // First, find many candidate paths using Yen's algorithm
-    int candidate_count = min(k * 3, 50); // Get more candidates
+    int candidate_count = min(k * 5, 50); // Get more candidates
     vector<PathInfo> candidates = findKShortestPaths(source, target, candidate_count, "distance");
     
     if (candidates.empty()) {
         return vector<PathInfo>();
     }
     
+    // First path is always the shortest
+    vector<PathInfo> result;
+    result.push_back(candidates[0]);
     double shortest_length = candidates[0].length;
     
-    // Calculate penalties for each candidate
-    for (size_t i = 1; i < candidates.size(); i++) {
-        double overlap_score = 0.0;
+    // Now select k-1 more paths with diversity
+    for (int i = 1; i < (int)candidates.size() && (int)result.size() < k; i++) {
+        // Calculate penalties for this candidate
+        double overlap_penalty_sum = 0.0;
+        double distance_penalty = calculateDeviation(candidates[i].length, shortest_length) / 100.0 + 0.1;
         
-        // Calculate overlap with the shortest path
-        overlap_score = calculateOverlap(candidates[0].path, candidates[i].path);
+        // Count how many paths have overlap > threshold
+        int paths_with_high_overlap = 0;
+        for (const auto& selected_path : result) {
+            double overlap_pct = calculateOverlap(selected_path.path, candidates[i].path);
+            if (overlap_pct > overlap_threshold) {
+                paths_with_high_overlap++;
+            }
+        }
         
-        // Calculate deviation from shortest path
-        double deviation = calculateDeviation(candidates[i].length, shortest_length);
+        overlap_penalty_sum = paths_with_high_overlap;
         
-        // Combined penalty: lower is better
-        candidates[i].penalty = overlap_penalty * overlap_score + distance_penalty * deviation;
-    }
-    
-    // Sort by penalty (ascending - lower penalty is better)
-    sort(candidates.begin() + 1, candidates.end(), 
-         [](const PathInfo& a, const PathInfo& b) {
-             return a.penalty < b.penalty;
-         });
-    
-    // Return top k
-    vector<PathInfo> result;
-    for (int i = 0; i < min(k, (int)candidates.size()); i++) {
+        // Total penalty as per spec
+        candidates[i].penalty = overlap_penalty_sum * distance_penalty;
         result.push_back(candidates[i]);
     }
     

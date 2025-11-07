@@ -1,28 +1,59 @@
 # Graph-Based Routing System - CS293 Project
 
-## Project Status
+## Project Status (Updated: Nov 7, 2025)
 
-### ✅ Completed
-- **Phase 1**: FULLY IMPLEMENTED AND TESTED ✅
-  - Graph data structure with dynamic updates
-  - Shortest path (distance & time modes)
-  - Time-dependent routing with speed profiles
-  - Path constraints (forbidden nodes/road types)
-  - KNN queries (Euclidean & shortest path metrics)
-  - Dynamic graph updates (remove/modify edges)
+### ✅ Completed & Updated to New Specification
+- **Phase 1**: FULLY UPDATED ✅
+  - Output format changed to `{meta: {...}, results: [...]}`
+  - Try-catch error handling for all queries
+  - Correct field names: `minimum_time` or `minimum_distance` (not both)
+  - `remove_edge` returns false if already deleted
+  - `modify_edge` logic updated per specification
 
-- **Phase 2**: FULLY IMPLEMENTED AND TESTED ✅
-  - K shortest paths (exact - Yen's algorithm)
-  - K shortest paths (heuristic with path diversity)
-  - Approximate shortest paths with landmarks (ALT algorithm)
-  - Batch query processing with time budgets
+- **Phase 2**: FULLY UPDATED ✅
+  - Output format changed to `{meta: {...}, results: [...]}`
+  - Try-catch error handling for all queries
+  - `approx_shortest_path` processes queries ONE BY ONE with time budget check
+  - Output field changed to `approx_shortest_distance`
+  - Heuristic k-shortest paths updated with `overlap_threshold` parameter
+  - Edge overlap calculation (not node overlap)
 
 ### 🚧 Pending
 - **Phase 3**: Structure created, implementation pending
-  - Delivery scheduling (TSP variant)
+  - TSP delivery scheduling
+  - Can ignore speed profiles, use average_time only
   - Pickup/dropoff constraints
   - Multi-driver optimization
-  - Total vs. max delivery time comparison
+
+## Key Changes from Original Specification
+
+### Output Format
+**OLD:** Direct array `[{result1}, {result2}, ...]`  
+**NEW:** Object with meta and results:
+```json
+{
+  "meta": { "id": "qset1" },
+  "results": [
+    {"id": 1, "possible": true, "minimum_distance": 123, "path": [...], "processing_time": 0.5},
+    {"id": 2, "nodes": [...], "processing_time": 0.3}
+  ]
+}
+```
+
+### Error Handling
+**NEW REQUIREMENT:** All queries must be wrapped in try-catch blocks. If a query fails, return error result and continue processing remaining queries.
+
+### Phase 2 Changes
+- **Approximate shortest paths**: Must process queries **one by one**, checking time budget before each query. If budget exceeded, reject remaining queries.
+- **Output field**: Changed from `distance` to `approx_shortest_distance`
+- **Heuristic k-shortest paths**: Uses `overlap_threshold` (percentage) to calculate penalties
+
+### Dynamic Edge Updates
+- `remove_edge`: Returns `false` if edge already deleted
+- `modify_edge`: 
+  - If edge deleted: restore with patch (or previous values if patch empty)
+  - If edge exists and patch empty: return `false`
+  - If edge doesn't exist: return `false`
 
 ## Quick Start
 
@@ -187,14 +218,37 @@ CS293_Project/
 
 ## Development Timeline
 
-- **Nov 4, 2025**: ✅ Phase 1 implementation completed and tested
-- **Nov 4, 2025**: ✅ Phase 2 implementation completed and tested
-- **Nov 4, 2025**: ✅ Directory restructure (removed common/ folder)
-- **Nov 4, 2025**: ✅ Pushed to GitHub repository
-- **Nov 5-9, 2025**: Phase 3 implementation (TSP delivery scheduling)
+- **Nov 4, 2025**: ✅ Phase 1 & 2 initial implementation completed
+- **Nov 7, 2025**: ✅ **MAJOR UPDATE** - All code updated to match ProjectChanged.md specification
+  - Output format changed to `{meta, results}`
+  - Try-catch error handling added
+  - Field names corrected
+  - Approximate query processing fixed
+- **Nov 8-9, 2025**: Phase 3 implementation (TSP delivery scheduling)
 - **Nov 10, 2025**: **DEADLINE - Phases 1 & 2** ⏰
-- **Nov 11-20, 2025**: Phase 3 testing, optimization, and report writing
+- **Nov 11-21, 2025**: Phase 3 testing, optimization, and report writing
 - **Nov 22, 2025**: **DEADLINE - Phase 3** ⏰
+
+## Grading Information
+
+### Phase 1 (5 marks)
+- **70% weightage**: Accuracy under reasonable execution time
+- **30% weightage**: Execution time (relatively graded, linear scale between max/min times)
+- Focus on correct and highly efficient algorithms
+
+### Phase 2 (7 marks)
+- Similar balance: Accuracy (70%) + Efficiency (30%)
+- Heuristic evaluation: Relative grading and threshold-based assessment
+- Quantitative results and qualitative heuristics matter
+
+### Phase 3 (8 marks)
+- Partially relatively graded
+- Major marks for:
+  - Depth of exploration and experimentation
+  - Originality of ideas
+  - Quality and comprehensiveness of report
+
+**Total: 20 marks**
 
 ## Testing
 

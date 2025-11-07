@@ -49,37 +49,46 @@ void Graph::rebuildAdjacencyList() {
 }
 
 bool Graph::removeEdge(int edge_id) {
-    if (edges.find(edge_id) != edges.end()) {
+    // Only remove if edge exists and is NOT already deleted
+    if (edges.find(edge_id) != edges.end() && !edges[edge_id].deleted) {
         edges[edge_id].deleted = true;
         deleted_edges[edge_id] = edges[edge_id]; // Store for potential restoration
         rebuildAdjacencyList();
         return true;
     }
+    // If already deleted or doesn't exist, return false
     return false;
 }
 
-bool Graph::modifyEdge(int edge_id, const Edge& patch) {
-    // Case 1: Edge exists and is deleted -> restore with patch
+bool Graph::modifyEdge(int edge_id, const Edge& patch, bool has_patch) {
+    // Case 1: If the edge is deleted, restore it with patch values
     if (edges.find(edge_id) != edges.end() && edges[edge_id].deleted) {
-        Edge& edge = edges[edge_id];
-        edge.deleted = false;
-        
-        // Apply patch values
-        if (patch.length > 0) edge.length = patch.length;
-        if (patch.average_time > 0) edge.average_time = patch.average_time;
-        if (!patch.speed_profile.empty()) edge.speed_profile = patch.speed_profile;
-        if (!patch.road_type.empty()) edge.road_type = patch.road_type;
-        // oneway is kept from original unless explicitly patched
-        
+        if (!has_patch) {
+            // Restore with previous values if patch is empty
+            edges[edge_id].deleted = false;
+        } else {
+            // Restore with patch values
+            Edge& edge = edges[edge_id];
+            edge.deleted = false;
+            
+            if (patch.length > 0) edge.length = patch.length;
+            if (patch.average_time > 0) edge.average_time = patch.average_time;
+            if (!patch.speed_profile.empty()) edge.speed_profile = patch.speed_profile;
+            if (!patch.road_type.empty()) edge.road_type = patch.road_type;
+        }
         rebuildAdjacencyList();
         return true;
     }
     
-    // Case 2: Edge exists and is not deleted -> modify
+    // Case 2: Edge is not deleted, modify if patch is not empty
     if (edges.find(edge_id) != edges.end() && !edges[edge_id].deleted) {
+        if (!has_patch) {
+            // Patch is empty, ignore and return false
+            return false;
+        }
+        
         Edge& edge = edges[edge_id];
         
-        // Apply patch values
         if (patch.length > 0) edge.length = patch.length;
         if (patch.average_time > 0) edge.average_time = patch.average_time;
         if (!patch.speed_profile.empty()) edge.speed_profile = patch.speed_profile;
@@ -89,22 +98,7 @@ bool Graph::modifyEdge(int edge_id, const Edge& patch) {
         return true;
     }
     
-    // Case 3: Edge was in deleted_edges and not in edges -> restore
-    if (deleted_edges.find(edge_id) != deleted_edges.end()) {
-        Edge restored = deleted_edges[edge_id];
-        restored.deleted = false;
-        
-        // Apply patch values
-        if (patch.length > 0) restored.length = patch.length;
-        if (patch.average_time > 0) restored.average_time = patch.average_time;
-        if (!patch.speed_profile.empty()) restored.speed_profile = patch.speed_profile;
-        if (!patch.road_type.empty()) restored.road_type = patch.road_type;
-        
-        edges[edge_id] = restored;
-        rebuildAdjacencyList();
-        return true;
-    }
-    
+    // Case 3: Edge doesn't exist, return false
     return false;
 }
 

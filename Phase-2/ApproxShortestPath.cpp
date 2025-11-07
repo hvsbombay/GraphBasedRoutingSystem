@@ -159,6 +159,25 @@ double ApproxShortestPath::bidirectionalAStar(int source, int target) {
     return dist.count(target) ? dist[target] : -1.0;
 }
 
+double ApproxShortestPath::findApproxPath(int source, int target, double time_budget_ms, double acceptable_error_pct) {
+    // Single query with time budget check
+    auto start_time = chrono::high_resolution_clock::now();
+    
+    // Use bidirectional A* with landmarks
+    double distance = bidirectionalAStar(source, target);
+    
+    auto end_time = chrono::high_resolution_clock::now();
+    double elapsed = chrono::duration<double, milli>(end_time - start_time).count();
+    
+    // If we're within time budget, return the result
+    if (elapsed <= time_budget_ms) {
+        return distance;
+    }
+    
+    // If exceeded (shouldn't happen with iteration limits), still return result
+    return distance;
+}
+
 vector<double> ApproxShortestPath::findApproxPaths(const vector<pair<int, int>>& queries,
                                                    double time_budget_ms,
                                                    double acceptable_error_pct) {

@@ -60,7 +60,7 @@ public:
     
     // Dynamic updates
     bool removeEdge(int edge_id);
-    bool modifyEdge(int edge_id, const Edge& patch);
+    bool modifyEdge(int edge_id, const Edge& patch, bool has_patch);
     
     // Queries
     const Node* getNode(int node_id) const;

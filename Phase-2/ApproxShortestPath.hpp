@@ -28,7 +28,10 @@ public:
     // Initialize approximation structures
     void initialize();
     
-    // Batch approximate shortest paths
+    // Single approximate shortest path query
+    double findApproxPath(int source, int target, double time_budget_ms, double acceptable_error_pct);
+    
+    // Batch approximate shortest paths (deprecated - use individual queries)
     vector<double> findApproxPaths(const vector<pair<int, int>>& queries,
                                   double time_budget_ms,
                                   double acceptable_error_pct);

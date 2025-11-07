@@ -39,8 +39,7 @@ public:
     
     // Heuristic k shortest paths with diversity
     vector<PathInfo> findKShortestPathsHeuristic(int source, int target, int k,
-                                                 double overlap_penalty,
-                                                 double distance_penalty);
+                                                 double overlap_threshold);
 };
 
 #endif // K_SHORTEST_PATHS_HPP

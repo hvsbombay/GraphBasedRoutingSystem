@@ -71,42 +71,50 @@ void loadGraph(const string& filename) {
          << graph.getEdgeCount() << " edges" << endl;
 }
 
-// Process a single query
+// Process a single query with try-catch as per new specification
 json process_query(const json& query) {
     json result;
-    string query_type = query["type"];
     
-    if (query_type == "remove_edge") {
-        int edge_id = query["edge_id"];
-        graph.removeEdge(edge_id);
-        result["done"] = true;
-    }
-    else if (query_type == "modify_edge") {
-        int edge_id = query["edge_id"];
-        Edge patch;
+    try {
+        string query_type = query["type"];
         
-        if (query.contains("patch")) {
-            const auto& patch_json = query["patch"];
+        if (query_type == "remove_edge") {
+            int edge_id = query["edge_id"];
+            int id = query["id"];
+            bool success = graph.removeEdge(edge_id);
+            result["id"] = id;
+            result["done"] = success;
+        }
+        else if (query_type == "modify_edge") {
+            int edge_id = query["edge_id"];
+            int id = query["id"];
+            Edge patch;
+            bool has_patch = false;
             
-            if (patch_json.contains("length")) {
-                patch.length = patch_json["length"];
-            }
-            if (patch_json.contains("average_time")) {
-                patch.average_time = patch_json["average_time"];
-            }
-            if (patch_json.contains("speed_profile")) {
-                for (const auto& speed : patch_json["speed_profile"]) {
-                    patch.speed_profile.push_back(speed);
+            if (query.contains("patch") && !query["patch"].empty()) {
+                has_patch = true;
+                const auto& patch_json = query["patch"];
+                
+                if (patch_json.contains("length")) {
+                    patch.length = patch_json["length"];
+                }
+                if (patch_json.contains("average_time")) {
+                    patch.average_time = patch_json["average_time"];
+                }
+                if (patch_json.contains("speed_profile")) {
+                    for (const auto& speed : patch_json["speed_profile"]) {
+                        patch.speed_profile.push_back(speed);
+                    }
+                }
+                if (patch_json.contains("road_type")) {
+                    patch.road_type = patch_json["road_type"];
                 }
             }
-            if (patch_json.contains("road_type")) {
-                patch.road_type = patch_json["road_type"];
-            }
+            
+            bool success = graph.modifyEdge(edge_id, patch, has_patch);
+            result["id"] = id;
+            result["done"] = success;
         }
-        
-        graph.modifyEdge(edge_id, patch);
-        result["done"] = true;
-    }
     else if (query_type == "shortest_path") {
         int id = query["id"];
         int source = query["source"];
@@ -177,6 +185,20 @@ json process_query(const json& query) {
         result["error"] = "Unknown query type: " + query_type;
     }
     
+    } catch (const exception& e) {
+        // Gracefully handle errors as per new specification
+        result["error"] = string("Exception: ") + e.what();
+        if (query.contains("id")) {
+            result["id"] = query["id"];
+        }
+    } catch (...) {
+        // Catch any other exceptions
+        result["error"] = "Unknown exception occurred";
+        if (query.contains("id")) {
+            result["id"] = query["id"];
+        }
+    }
+    
     return result;
 }
 
@@ -198,19 +220,27 @@ int main(int argc, char* argv[]) {
     json queries_json;
     queries_file >> queries_json;
     
-    vector<json> results;
-    
-    // Handle both array format and object with "events" field
+    // Extract meta and events as per new specification
+    json meta;
     json events;
-    if (queries_json.is_array()) {
-        events = queries_json;
-    } else if (queries_json.contains("events")) {
+    
+    if (queries_json.contains("meta")) {
+        meta = queries_json["meta"];
+    }
+    
+    if (queries_json.contains("events")) {
         events = queries_json["events"];
+    } else if (queries_json.is_array()) {
+        // Fallback for old format
+        events = queries_json;
     } else {
-        cerr << "Invalid query format" << endl;
+        cerr << "Invalid query format - missing 'events' field" << endl;
         return 1;
     }
     
+    vector<json> results;
+    
+    // Process each query one by one with try-catch
     for (const auto& query : events) {
         auto start_time = chrono::high_resolution_clock::now();
         
@@ -221,13 +251,19 @@ int main(int argc, char* argv[]) {
         results.push_back(result);
     }
     
+    // Write output with new format: {meta: {...}, results: [...]}
     ofstream output_file(argv[3]);
     if (!output_file.is_open()) {
         cerr << "Failed to open output.json for writing" << endl;
         return 1;
     }
     
-    json output = results;
+    json output;
+    if (!meta.is_null()) {
+        output["meta"] = meta;
+    }
+    output["results"] = results;
+    
     output_file << output.dump(4) << endl;
     
     output_file.close();
