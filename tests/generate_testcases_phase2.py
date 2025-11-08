@@ -42,24 +42,20 @@ def generate_phase2_queries(num_nodes=15):
         "source": 0,
         "target": num_nodes - 1,
         "k": 5,
-        "heuristic": {
-            "overlap_penalty": 0.7,
-            "distance_penalty": 0.3
-        }
+        "mode": "distance",
+        "overlap_threshold": 30.0
     })
     query_id += 1
     
-    # Another heuristic query with different penalties
+    # Another heuristic query with different overlap threshold
     queries.append({
         "type": "k_shortest_paths_heuristic",
         "id": query_id,
         "source": 1,
         "target": num_nodes - 2,
         "k": 4,
-        "heuristic": {
-            "overlap_penalty": 0.5,
-            "distance_penalty": 0.5
-        }
+        "mode": "distance",
+        "overlap_threshold": 40.0
     })
     query_id += 1
     
@@ -78,6 +74,7 @@ def generate_phase2_queries(num_nodes=15):
         "type": "approx_shortest_path",
         "id": query_id,
         "queries": batch_queries,
+        "mode": "distance",
         "time_budget_ms": 100,
         "acceptable_error_pct": 5.0
     })
@@ -98,12 +95,18 @@ def generate_phase2_queries(num_nodes=15):
         "type": "approx_shortest_path",
         "id": query_id,
         "queries": batch_queries_2,
+        "mode": "distance",
         "time_budget_ms": 50,
         "acceptable_error_pct": 10.0
     })
     query_id += 1
     
-    return {"events": queries}
+    return {
+        "meta": {
+            "id": "phase2_test_queries"
+        },
+        "events": queries
+    }
 
 if __name__ == "__main__":
     print("Generating Phase 2 test queries...")

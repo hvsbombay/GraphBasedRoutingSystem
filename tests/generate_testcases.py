@@ -179,8 +179,10 @@ def generate_phase1_queries(num_nodes=10):
     # Dynamic update - remove edge
     queries.append({
         "type": "remove_edge",
+        "id": query_id,
         "edge_id": 1001
     })
+    query_id += 1
     
     # Query after edge removal
     queries.append({
@@ -195,11 +197,13 @@ def generate_phase1_queries(num_nodes=10):
     # Modify edge - restore
     queries.append({
         "type": "modify_edge",
+        "id": query_id,
         "edge_id": 1001,
         "patch": {
             "length": 150.0
         }
     })
+    query_id += 1
     
     # Query after edge modification
     queries.append({
@@ -211,7 +215,10 @@ def generate_phase1_queries(num_nodes=10):
     })
     query_id += 1
     
-    return {"events": queries}
+    return {
+        "meta": {"id": "phase1_test_queries"},
+        "events": queries
+    }
 
 if __name__ == "__main__":
     # Generate graph
