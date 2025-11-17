@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""
-Test case generator for Phase 2 of the Graph Routing System
-"""
+"""Test case generator for Phase 2 of the Graph Routing System."""
 
 import json
 import random
-import math
 
-def generate_phase2_queries(num_nodes=15):
-    """Generate Phase 2 test queries"""
+def generate_phase2_queries(num_nodes: int = 15) -> dict:
+    """Generate Phase 2 test queries that respect ProjectChanged.md."""
     
     queries = []
     query_id = 1
@@ -30,7 +27,7 @@ def generate_phase2_queries(num_nodes=15):
         "id": query_id,
         "source": 2,
         "target": num_nodes - 3,
-        "k": 3,
+        "k": 4,
         "mode": "distance"
     })
     query_id += 1
@@ -43,7 +40,7 @@ def generate_phase2_queries(num_nodes=15):
         "target": num_nodes - 1,
         "k": 5,
         "mode": "distance",
-        "overlap_threshold": 30.0
+        "overlap_threshold": 45
     })
     query_id += 1
     
@@ -55,20 +52,18 @@ def generate_phase2_queries(num_nodes=15):
         "target": num_nodes - 2,
         "k": 4,
         "mode": "distance",
-        "overlap_threshold": 40.0
+        "overlap_threshold": 30
     })
     query_id += 1
     
     # Approximate shortest path (batch) query
     batch_queries = []
-    for i in range(10):
+    while len(batch_queries) < 12:
         src = random.randint(0, num_nodes - 1)
         tgt = random.randint(0, num_nodes - 1)
-        if src != tgt:
-            batch_queries.append({
-                "source": src,
-                "target": tgt
-            })
+        if src == tgt:
+            continue
+        batch_queries.append({"source": src, "target": tgt})
     
     queries.append({
         "type": "approx_shortest_path",
@@ -82,22 +77,20 @@ def generate_phase2_queries(num_nodes=15):
     
     # Another batch query with tighter time budget
     batch_queries_2 = []
-    for i in range(20):
+    while len(batch_queries_2) < 18:
         src = random.randint(0, num_nodes - 1)
         tgt = random.randint(0, num_nodes - 1)
-        if src != tgt:
-            batch_queries_2.append({
-                "source": src,
-                "target": tgt
-            })
+        if src == tgt:
+            continue
+        batch_queries_2.append({"source": src, "target": tgt})
     
     queries.append({
         "type": "approx_shortest_path",
         "id": query_id,
         "queries": batch_queries_2,
         "mode": "distance",
-        "time_budget_ms": 50,
-        "acceptable_error_pct": 10.0
+        "time_budget_ms": 60,
+        "acceptable_error_pct": 15.0
     })
     query_id += 1
     

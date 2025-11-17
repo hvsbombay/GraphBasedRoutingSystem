@@ -1,114 +1,122 @@
 #!/usr/bin/env python3
 """
-Test case generator for Phase 1 of the Graph Routing System
-Generates simple synthetic graphs and queries for testing
+Test case generator for Phase 1 of the Graph Routing System.
+Generates JSON inputs that comply with the latest ProjectChanged.md spec.
 """
 
 import json
 import random
 import math
+from typing import Dict, List, Set, Tuple
 
-def generate_simple_graph(num_nodes=10, num_edges=20):
-    """Generate a simple connected graph"""
-    
-    # Generate nodes in a grid-like pattern around Mumbai coordinates
+ALLOWED_POIS = ["restaurant", "petrol station", "hospital", "pharmacy", "hotel", "atm"]
+ROAD_TYPES = ["primary", "secondary", "tertiary", "local", "expressway"]
+
+
+def _compute_length(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Approximate great-circle distance in meters for small regions."""
+
+    dlat = (lat2 - lat1) * 111_000.0
+    dlon = (lon2 - lon1) * 111_000.0 * math.cos(math.radians((lat1 + lat2) / 2.0))
+    return math.hypot(dlat, dlon)
+
+
+def _generate_speed_profile(base_speed: float) -> List[float]:
+    """Return a 96-slot speed profile around the supplied base speed (m/s)."""
+
+    profile = []
+    for slot in range(96):
+        fluctuation = random.uniform(-0.25, 0.25)
+        slot_speed = max(5.0, base_speed * (1.0 + fluctuation))
+        profile.append(round(slot_speed, 2))
+    return profile
+
+
+def generate_simple_graph(num_nodes: int = 10, num_edges: int = 20) -> Dict[str, object]:
+    """Generate a simple connected graph that respects the project specification."""
+
     base_lat = 19.070
     base_lon = 72.870
-    
-    nodes = []
-    poi_types = ["Restaurant", "Hospital", "School", "Mall", "Park"]
-    
-    for i in range(num_nodes):
-        lat = base_lat + (i % 5) * 0.01
-        lon = base_lon + (i // 5) * 0.01
-        
-        # Randomly assign 0-2 POIs to each node
-        num_pois = random.randint(0, 2)
-        pois = random.sample(poi_types, min(num_pois, len(poi_types)))
-        
+
+    nodes: List[Dict[str, object]] = []
+    for node_id in range(num_nodes):
+        lat = base_lat + (node_id % 5) * 0.01
+        lon = base_lon + (node_id // 5) * 0.01
+
+        poi_count = random.randint(0, 2)
+        pois = random.sample(ALLOWED_POIS, poi_count)
+
         nodes.append({
-            "id": i,
-            "lat": lat,
-            "lon": lon,
-            "pois": pois
+            "id": node_id,
+            "lat": round(lat, 6),
+            "lon": round(lon, 6),
+            "pois": pois,
         })
-    
-    # Generate edges
-    edges = []
+
+    edges: List[Dict[str, object]] = []
     edge_id = 1000
-    road_types = ["primary", "secondary", "tertiary", "local", "expressway"]
-    
-    # Create a connected graph first (spanning tree)
-    for i in range(1, num_nodes):
-        u = random.randint(0, i-1)
-        v = i
-        
-        # Calculate approximate distance
-        lat1, lon1 = nodes[u]["lat"], nodes[u]["lon"]
-        lat2, lon2 = nodes[v]["lat"], nodes[v]["lon"]
-        
-        dlat = (lat2 - lat1) * 111000  # meters
-        dlon = (lon2 - lon1) * 111000 * math.cos(math.radians((lat1 + lat2) / 2))
-        length = math.sqrt(dlat**2 + dlon**2)
-        
-        # Average speed 10-20 m/s
-        avg_speed = random.uniform(10, 20)
-        avg_time = length / avg_speed
-        
-        edges.append({
+    seen_pairs: Set[Tuple[int, int]] = set()
+
+    def add_edge(u: int, v: int) -> None:
+        nonlocal edge_id
+        length = _compute_length(nodes[u]["lat"], nodes[u]["lon"], nodes[v]["lat"], nodes[v]["lon"])
+        base_speed = random.uniform(8.0, 22.0)
+        avg_time = length / base_speed if base_speed > 0 else length / 10.0
+        road_type = random.choice(ROAD_TYPES)
+
+        is_oneway = random.random() < 0.3
+
+        edge: Dict[str, object] = {
             "id": edge_id,
             "u": u,
             "v": v,
             "length": round(length, 2),
             "average_time": round(avg_time, 2),
-            "oneway": random.choice([True, False]),
-            "road_type": random.choice(road_types)
-        })
+            "oneway": is_oneway,
+            "road_type": road_type,
+        }
+
+        # Attach a 96-slot profile for a subset of edges (Phase 1 requirement).
+        if road_type in {"primary", "expressway"}:
+            edge["speed_profile"] = _generate_speed_profile(base_speed)
+
+        edges.append(edge)
+        seen_pairs.add((min(u, v), max(u, v)))
         edge_id += 1
-    
-    # Add random edges
-    for _ in range(num_edges - (num_nodes - 1)):
+
+    # Spanning tree ensures connectivity.
+    for node_id in range(1, num_nodes):
+        parent = random.randint(0, node_id - 1)
+        add_edge(parent, node_id)
+
+    # Add remaining edges while respecting the simple-graph constraint.
+    attempts = 0
+    target_edges = max(num_edges, num_nodes - 1)
+    while len(edges) < target_edges and attempts < num_nodes * num_nodes:
         u = random.randint(0, num_nodes - 1)
         v = random.randint(0, num_nodes - 1)
-        
+        attempts += 1
+
         if u == v:
             continue
-        
-        # Calculate distance
-        lat1, lon1 = nodes[u]["lat"], nodes[u]["lon"]
-        lat2, lon2 = nodes[v]["lat"], nodes[v]["lon"]
-        
-        dlat = (lat2 - lat1) * 111000
-        dlon = (lon2 - lon1) * 111000 * math.cos(math.radians((lat1 + lat2) / 2))
-        length = math.sqrt(dlat**2 + dlon**2)
-        
-        avg_speed = random.uniform(10, 20)
-        avg_time = length / avg_speed
-        
-        edges.append({
-            "id": edge_id,
-            "u": u,
-            "v": v,
-            "length": round(length, 2),
-            "average_time": round(avg_time, 2),
-            "oneway": random.choice([True, False]),
-            "road_type": random.choice(road_types)
-        })
-        edge_id += 1
-    
+        if (min(u, v), max(u, v)) in seen_pairs:
+            continue
+
+        add_edge(u, v)
+
     graph = {
         "meta": {
             "id": "test_graph_1",
             "nodes": num_nodes,
-            "description": "Synthetic test graph for Phase 1"
+            "description": "Synthetic test graph for Phase 1",
         },
         "nodes": nodes,
-        "edges": edges
+        "edges": edges,
     }
-    
+
     return graph
 
-def generate_phase1_queries(num_nodes=10):
+def generate_phase1_queries(num_nodes: int = 10) -> Dict[str, object]:
     """Generate Phase 1 test queries"""
     
     queries = []
