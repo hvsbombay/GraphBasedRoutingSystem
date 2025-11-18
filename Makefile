@@ -17,7 +17,7 @@ PHASE2_SRC = $(PHASE2_DIR)/main.cpp $(PHASE2_DIR)/KShortestPaths.cpp $(PHASE2_DI
 PHASE2_OBJ = $(PHASE2_SRC:.cpp=.o)
 
 # Phase 3
-PHASE3_SRC = $(PHASE3_DIR)/main.cpp $(PHASE3_DIR)/Graph.cpp
+PHASE3_SRC = $(PHASE3_DIR)/main.cpp $(PHASE3_DIR)/Graph.cpp $(PHASE3_DIR)/DeliveryScheduler.cpp
 PHASE3_OBJ = $(PHASE3_SRC:.cpp=.o)
 
 # Targets

@@ -1,5 +1,6 @@
 #include "json.hpp"
 #include "Graph.hpp"
+#include "DeliveryScheduler.hpp"
 #include <iostream>
 #include <fstream>
 #include <chrono>
@@ -67,10 +68,73 @@ void loadGraph(const string& filename) {
 json process_query(const json& query) {
     json result;
     
-    // TODO: Implement Phase 3 delivery scheduling
-    // TSP variant with pickup/dropoff constraints
-    
-    result["error"] = "Phase 3 not yet implemented";
+    try {
+        // Parse delivery scheduling query
+        if (!query.contains("orders") || !query.contains("fleet")) {
+            result["error"] = "Missing required fields: orders or fleet";
+            return result;
+        }
+        
+        // Parse orders
+        vector<Order> orders;
+        for (const auto& order_json : query["orders"]) {
+            Order order;
+            order.order_id = order_json["order_id"];
+            order.pickup_node = order_json["pickup"];
+            order.dropoff_node = order_json["dropoff"];
+            orders.push_back(order);
+        }
+        
+        // Parse fleet info
+        int num_delivery_guys = query["fleet"]["num_delievery_guys"];  // Note: typo in spec
+        int depot_node = query["fleet"]["depot_node"];
+        
+        // Validate depot node exists
+        if (!graph.hasNode(depot_node)) {
+            result["error"] = "Invalid depot node";
+            return result;
+        }
+        
+        // Validate all order nodes exist
+        for (const auto& order : orders) {
+            if (!graph.hasNode(order.pickup_node) || !graph.hasNode(order.dropoff_node)) {
+                result["error"] = "Invalid order nodes";
+                return result;
+            }
+        }
+        
+        // Create scheduler and run
+        DeliveryScheduler scheduler(graph, depot_node, orders, num_delivery_guys);
+        SchedulingResult scheduling_result = scheduler.schedule();
+        
+        // Build output JSON
+        json assignments_json = json::array();
+        
+        for (const auto& driver : scheduling_result.assignments) {
+            if (driver.order_ids.empty()) continue;  // Skip drivers with no assignments
+            
+            json driver_json;
+            driver_json["driver_id"] = driver.driver_id;
+            driver_json["route"] = driver.route;
+            
+            // Convert order indices to actual order_ids
+            json order_ids_json = json::array();
+            for (int order_idx : driver.order_ids) {
+                order_ids_json.push_back(orders[order_idx].order_id);
+            }
+            driver_json["order_ids"] = order_ids_json;
+            
+            assignments_json.push_back(driver_json);
+        }
+        
+        result["assignments"] = assignments_json;
+        result["metrics"] = {
+            {"total_delivery_time_s", scheduling_result.total_delivery_time}
+        };
+        
+    } catch (const exception& e) {
+        result["error"] = string("Exception: ") + e.what();
+    }
     
     return result;
 }
