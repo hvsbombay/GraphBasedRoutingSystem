@@ -129,7 +129,7 @@ double ApproxShortestPath::bidirectionalAStar(int source, int target) {
     pq.push({0.0, source});
     
     int iterations = 0;
-    const int max_iterations = 500; // Limit for speed
+    const int max_iterations = 50000; // Increased limit for larger graphs
     
     while (!pq.empty() && iterations < max_iterations) {
         iterations++;
@@ -137,7 +137,13 @@ double ApproxShortestPath::bidirectionalAStar(int source, int target) {
         auto [d, u] = pq.top();
         pq.pop();
         
-        if (d > dist[u]) continue;
+        // Check if this is a stale entry
+        // Recompute heuristic to compare f-scores correctly
+        // d is f_score = g_score + h_score * 1.2
+        // dist[u] is best known g_score
+        // We want to skip if (d - h*1.2) > dist[u]
+        double h = getLowerBound(u, target);
+        if (d > dist[u] + h * 1.2 + 1e-9) continue;
         
         if (u == target) {
             return dist[target];
@@ -150,7 +156,8 @@ double ApproxShortestPath::bidirectionalAStar(int source, int target) {
             if (dist.find(v) == dist.end() || new_dist < dist[v]) {
                 dist[v] = new_dist;
                 double heuristic = getLowerBound(v, target);
-                pq.push({new_dist + heuristic * 0.5, v}); // 0.5 factor for admissibility
+                // Weighted A* with w=1.2 for speedup (allowed by acceptable error)
+                pq.push({new_dist + heuristic * 1.2, v}); 
             }
         }
     }

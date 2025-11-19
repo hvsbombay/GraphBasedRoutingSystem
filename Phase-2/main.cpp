@@ -68,8 +68,11 @@ void loadGraph(const string& filename) {
     // Initialize approximate shortest path structures
     approx_sp = new ApproxShortestPath(graph);
     cout << "Initializing landmarks for approximate shortest paths..." << endl;
+    auto start_init = chrono::high_resolution_clock::now();
     approx_sp->initialize();
-    cout << "Initialization complete!" << endl;
+    auto end_init = chrono::high_resolution_clock::now();
+    double init_duration = chrono::duration<double, milli>(end_init - start_init).count();
+    cout << "Initialization complete! Time: " << init_duration << " ms" << endl;
 }
 
 // Process a single query (Phase 2 implementation) with try-catch
@@ -185,8 +188,8 @@ json process_query(const json& query) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 4) {
-        cerr << "Usage: " << argv[0] << " <graph.json> <queries.json> <output.json>" << endl;
+    if (argc != 4 && argc != 3) {
+        cerr << "Usage: " << argv[0] << " <graph.json> <queries.json> [output.json]" << endl;
         return 1;
     }
     
@@ -234,21 +237,23 @@ int main(int argc, char* argv[]) {
     }
     
     // Write output with new format: {meta: {...}, results: [...]}
-    ofstream output_file(argv[3]);
-    if (!output_file.is_open()) {
-        cerr << "Failed to open output.json for writing" << endl;
-        return 1;
-    }
-    
     json output;
     if (!meta.is_null()) {
         output["meta"] = meta;
     }
     output["results"] = results;
-    
-    output_file << output.dump(4) << endl;
-    
-    output_file.close();
+
+    if (argc == 4) {
+        ofstream output_file(argv[3]);
+        if (!output_file.is_open()) {
+            cerr << "Failed to open output.json for writing" << endl;
+            return 1;
+        }
+        output_file << output.dump(4) << endl;
+        output_file.close();
+    } else {
+        cout << output.dump(4) << endl;
+    }
     
     // Cleanup
     if (approx_sp) {

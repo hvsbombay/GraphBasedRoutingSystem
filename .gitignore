@@ -14,5 +14,10 @@
 
 # Test outputs
 tests/output/
-tests/*.json
-tests/*.txt
+tests/__pycache__/
+
+# Benchmark outputs (keep scripts, ignore results)
+benchmark_graph.json
+benchmark_queries.json
+bench_*.json
+*_results.json

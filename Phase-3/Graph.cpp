@@ -136,14 +136,8 @@ double Graph::getEdgeWeight(int edge_id, const string& mode, int time_slot) cons
     if (mode == "distance") {
         return edge->length;
     } else if (mode == "time") {
-        // Use speed profile if available
-        if (!edge->speed_profile.empty() && time_slot >= 0 && time_slot < 96) {
-            double speed = edge->speed_profile[time_slot];
-            if (speed > 0) {
-                return edge->length / speed; // time = distance / speed
-            }
-        }
-        // Fallback to average time
+        // For Phase 3, we always use average_time as per specification
+        // "For the phase-3, you can ignore the speed profiles and always use the average time."
         return edge->average_time;
     }
     

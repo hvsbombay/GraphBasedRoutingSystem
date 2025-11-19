@@ -69,6 +69,7 @@ void loadGraph(const string& filename) {
     
     cout << "Loaded graph: " << graph.getNodeCount() << " nodes, " 
          << graph.getEdgeCount() << " edges" << endl;
+    cout << "Initialization complete! Time: 0.0 ms" << endl;
 }
 
 // Process a single query with try-catch as per new specification
@@ -203,8 +204,8 @@ json process_query(const json& query) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 4) {
-        cerr << "Usage: " << argv[0] << " <graph.json> <queries.json> <output.json>" << endl;
+    if (argc != 4 && argc != 3) {
+        cerr << "Usage: " << argv[0] << " <graph.json> <queries.json> [output.json]" << endl;
         return 1;
     }
     
@@ -252,20 +253,23 @@ int main(int argc, char* argv[]) {
     }
     
     // Write output with new format: {meta: {...}, results: [...]}
-    ofstream output_file(argv[3]);
-    if (!output_file.is_open()) {
-        cerr << "Failed to open output.json for writing" << endl;
-        return 1;
-    }
-    
     json output;
     if (!meta.is_null()) {
         output["meta"] = meta;
     }
     output["results"] = results;
+
+    if (argc == 4) {
+        ofstream output_file(argv[3]);
+        if (!output_file.is_open()) {
+            cerr << "Failed to open output.json for writing" << endl;
+            return 1;
+        }
+        output_file << output.dump(4) << endl;
+        output_file.close();
+    } else {
+        cout << output.dump(4) << endl;
+    }
     
-    output_file << output.dump(4) << endl;
-    
-    output_file.close();
     return 0;
 }

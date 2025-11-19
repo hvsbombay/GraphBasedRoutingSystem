@@ -15,7 +15,7 @@ private:
     vector<int> landmarks;
     unordered_map<int, unordered_map<int, double>> landmark_distances;
     
-    void selectLandmarks(int count = 8);
+    void selectLandmarks(int count = 16);
     void computeLandmarkDistances();
     double getLowerBound(int node, int target);
     
