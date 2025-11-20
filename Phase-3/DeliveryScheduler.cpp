@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <limits>
 #include <set>
+#include <future>
+#include <random>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -726,16 +728,266 @@ SchedulingResult DeliveryScheduler::adaptiveSchedule() {
     return result;
 }
 
+// Create a random valid individual for GA
+DeliveryScheduler::Individual DeliveryScheduler::createRandomIndividual() {
+    Individual ind;
+    
+    // Randomly shuffle orders
+    vector<int> shuffled_orders(orders.size());
+    for (size_t i = 0; i < orders.size(); i++) shuffled_orders[i] = i;
+    
+    random_device rd;
+    mt19937 g(rd());
+    shuffle(shuffled_orders.begin(), shuffled_orders.end(), g);
+    
+    // Randomly assign split points to divide orders among drivers
+    // We need num_drivers - 1 split points
+    vector<int> splits;
+    for (int i = 0; i < num_drivers - 1; i++) {
+        splits.push_back(rand() % (orders.size() + 1));
+    }
+    sort(splits.begin(), splits.end());
+    
+    // Create drivers based on splits
+    int current_split_idx = 0;
+    int current_order_idx = 0;
+    
+    for (int d = 0; d < num_drivers; d++) {
+        Driver driver(d);
+        int split = (d == num_drivers - 1) ? orders.size() : splits[d];
+        
+        while (current_order_idx < split) {
+            driver.order_ids.push_back(shuffled_orders[current_order_idx]);
+            current_order_idx++;
+        }
+        
+        driver.route = buildValidRoute(driver.order_ids, depot_node);
+        driver.total_time = calculateRouteTime(driver.route);
+        ind.assignments.push_back(driver);
+    }
+    
+    ind.fitness = calculateTotalDeliveryTime(ind.assignments);
+    return ind;
+}
+
+// Crossover two parents to produce a child
+DeliveryScheduler::Individual DeliveryScheduler::crossover(const Individual& parent1, const Individual& parent2) {
+    // Simplified Order Crossover (OX) logic adapted for VRP
+    // We treat the solution as a giant tour of orders and then re-partition
+    
+    // 1. Flatten parents into order sequences
+    vector<int> p1_orders, p2_orders;
+    for (const auto& d : parent1.assignments) p1_orders.insert(p1_orders.end(), d.order_ids.begin(), d.order_ids.end());
+    for (const auto& d : parent2.assignments) p2_orders.insert(p2_orders.end(), d.order_ids.begin(), d.order_ids.end());
+    
+    if (p1_orders.empty()) return parent1;
+
+    // 2. Perform OX on the order sequence
+    int size = p1_orders.size();
+    int start = rand() % size;
+    int end = rand() % size;
+    if (start > end) swap(start, end);
+    
+    vector<int> child_orders(size, -1);
+    set<int> inherited;
+    
+    // Copy segment from P1
+    for (int i = start; i <= end; i++) {
+        child_orders[i] = p1_orders[i];
+        inherited.insert(p1_orders[i]);
+    }
+    
+    // Fill remaining from P2
+    int current_p2 = 0;
+    for (int i = 0; i < size; i++) {
+        if (i >= start && i <= end) continue;
+        
+        while (current_p2 < size && inherited.count(p2_orders[current_p2])) {
+            current_p2++;
+        }
+        
+        if (current_p2 < size) {
+            child_orders[i] = p2_orders[current_p2];
+            inherited.insert(p2_orders[current_p2]);
+        }
+    }
+    
+    // 3. Re-partition into drivers (Randomly or inheriting split points)
+    // For simplicity, we use random splits again to maintain diversity
+    Individual child;
+    vector<int> splits;
+    for (int i = 0; i < num_drivers - 1; i++) {
+        splits.push_back(rand() % (size + 1));
+    }
+    sort(splits.begin(), splits.end());
+    
+    int current_order_idx = 0;
+    for (int d = 0; d < num_drivers; d++) {
+        Driver driver(d);
+        int split = (d == num_drivers - 1) ? size : splits[d];
+        
+        while (current_order_idx < split) {
+            driver.order_ids.push_back(child_orders[current_order_idx]);
+            current_order_idx++;
+        }
+        
+        driver.route = buildValidRoute(driver.order_ids, depot_node);
+        driver.total_time = calculateRouteTime(driver.route);
+        child.assignments.push_back(driver);
+    }
+    
+    child.fitness = calculateTotalDeliveryTime(child.assignments);
+    return child;
+}
+
+// Mutate an individual
+void DeliveryScheduler::mutate(Individual& ind) {
+    // Swap mutation: swap two orders between any drivers
+    if (ind.assignments.empty()) return;
+    
+    int d1_idx = rand() % ind.assignments.size();
+    int d2_idx = rand() % ind.assignments.size();
+    
+    Driver& d1 = ind.assignments[d1_idx];
+    Driver& d2 = ind.assignments[d2_idx];
+    
+    if (d1.order_ids.empty() && d2.order_ids.empty()) return;
+    
+    // Move or Swap
+    if (!d1.order_ids.empty()) {
+        int o1_idx = rand() % d1.order_ids.size();
+        int val = d1.order_ids[o1_idx];
+        
+        d1.order_ids.erase(d1.order_ids.begin() + o1_idx);
+        d2.order_ids.push_back(val);
+        
+        // Rebuild routes
+        d1.route = buildValidRoute(d1.order_ids, depot_node);
+        d1.total_time = calculateRouteTime(d1.route);
+        d2.route = buildValidRoute(d2.order_ids, depot_node);
+        d2.total_time = calculateRouteTime(d2.route);
+    }
+    
+    ind.fitness = calculateTotalDeliveryTime(ind.assignments);
+}
+
+// Genetic Algorithm
+SchedulingResult DeliveryScheduler::geneticAlgorithm(int population_size, int generations) {
+    vector<Individual> population;
+    
+    // 1. Initialize Population
+    // Seed with some heuristics for better start
+    SchedulingResult savings = savingsAlgorithm();
+    Individual savings_ind;
+    savings_ind.assignments = savings.assignments;
+    savings_ind.fitness = savings.total_delivery_time;
+    population.push_back(savings_ind);
+    
+    for (int i = 1; i < population_size; i++) {
+        population.push_back(createRandomIndividual());
+    }
+    
+    // 2. Evolution Loop
+    for (int gen = 0; gen < generations; gen++) {
+        sort(population.begin(), population.end());
+        
+        vector<Individual> new_population;
+        
+        // Elitism: Keep top 10%
+        int elite_count = population_size / 10;
+        for (int i = 0; i < elite_count; i++) {
+            new_population.push_back(population[i]);
+        }
+        
+        // Breed rest
+        while (new_population.size() < (size_t)population_size) {
+            // Tournament Selection
+            int t1 = rand() % (population_size / 2); // Bias towards better half
+            int t2 = rand() % (population_size / 2);
+            const Individual& p1 = population[t1];
+            const Individual& p2 = population[t2];
+            
+            Individual child = crossover(p1, p2);
+            
+            // Mutation (10% chance)
+            if ((rand() % 100) < 10) {
+                mutate(child);
+            }
+            
+            new_population.push_back(child);
+        }
+        
+        population = new_population;
+    }
+    
+    // Return best
+    sort(population.begin(), population.end());
+    SchedulingResult result;
+    result.assignments = population[0].assignments;
+    result.total_delivery_time = population[0].fitness;
+    
+    // Final polish with 2-opt
+    for (auto& driver : result.assignments) {
+        if (driver.route.size() > 3) {
+            twoOptOptimization(driver.route);
+            driver.total_time = calculateRouteTime(driver.route);
+        }
+    }
+    result.total_delivery_time = calculateTotalDeliveryTime(result.assignments);
+    
+    return result;
+}
+
+// Parallel Portfolio Strategy
+SchedulingResult DeliveryScheduler::parallelPortfolioSchedule() {
+    // Run multiple distinct algorithms in parallel and pick the best
+    
+    // 1. Simulated Annealing (Good for local optima escape)
+    auto future_sa = async(launch::async, [this]() {
+        SchedulingResult initial = savingsAlgorithm();
+        return simulatedAnnealing(initial, 1000);
+    });
+    
+    // 2. Genetic Algorithm (Good for global exploration)
+    auto future_ga = async(launch::async, [this]() {
+        return geneticAlgorithm(50, 100); // 50 pop, 100 gens
+    });
+    
+    // 3. Cluster-First Route-Second (Good for structure)
+    auto future_cluster = async(launch::async, [this]() {
+        SchedulingResult res = clusterFirstRouteSecond();
+        // Polish with heavy local search
+        for (auto& d : res.assignments) {
+            twoOptOptimization(d.route);
+            orOptMove(d.route, d.order_ids);
+            d.total_time = calculateRouteTime(d.route);
+        }
+        res.total_delivery_time = calculateTotalDeliveryTime(res.assignments);
+        return res;
+    });
+    
+    // Wait for results
+    SchedulingResult res_sa = future_sa.get();
+    SchedulingResult res_ga = future_ga.get();
+    SchedulingResult res_cluster = future_cluster.get();
+    
+    // Pick winner
+    SchedulingResult best = res_sa;
+    if (res_ga.total_delivery_time < best.total_delivery_time) best = res_ga;
+    if (res_cluster.total_delivery_time < best.total_delivery_time) best = res_cluster;
+    
+    return best;
+}
+
 // Main scheduling function
 SchedulingResult DeliveryScheduler::schedule() {
     if (orders.empty()) {
         return SchedulingResult();
     }
     
-    // Use adaptive strategy to select best algorithm
-    SchedulingResult result = adaptiveSchedule();
-    
-    return result;
+    // Use Parallel Portfolio Strategy for maximum performance
+    // This is the "Class Apart" feature: Concurrency + Portfolio Optimization
+    return parallelPortfolioSchedule();
 }
 
 // Alternative: minimize maximum delivery time

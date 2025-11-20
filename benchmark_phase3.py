@@ -60,14 +60,15 @@ def print_benchmark_results(scenarios):
     
     print("="*80)
     print("\nKey Insights:")
-    print("- Adaptive algorithm selection based on problem size")
-    print("- Small problems (<10 orders): Multiple algorithms + Simulated Annealing")
-    print("- Medium problems (10-18 orders): Clarke-Wright Savings + Or-opt")
-    print("- Large problems (>18 orders): Cluster-First Route-Second + 2-opt")
+    print("- Parallel Portfolio Strategy: Runs 3 advanced algorithms concurrently")
+    print("- Genetic Algorithm (GA): Global exploration with population evolution")
+    print("- Simulated Annealing (SA): Local optima escape")
+    print("- Cluster-First Route-Second: Spatial decomposition")
+    print("- The system automatically picks the best result from all parallel threads")
     print("="*80)
 
 def main():
-    print("Phase 3 VRP Benchmarking Suite\n")
+    print("Phase 3 VRP Benchmarking Suite (Parallel Portfolio Mode)\n")
     
     scenarios = []
     
@@ -151,13 +152,13 @@ def main():
     print_benchmark_results(scenarios)
     
     print("\n✅ Advanced Algorithms Implemented:")
-    print("   1. Greedy Assignment (baseline)")
-    print("   2. Clarke-Wright Savings Algorithm")
-    print("   3. Simulated Annealing (metaheuristic)")
-    print("   4. Cluster-First Route-Second (spatial)")
-    print("   5. 2-opt Local Search")
-    print("   6. Or-opt Move (segment relocation)")
-    print("   7. Adaptive Strategy Selection\n")
+    print("   1. Parallel Portfolio Optimization (NEW)")
+    print("   2. Genetic Algorithm with Order Crossover (NEW)")
+    print("   3. Simulated Annealing (Metaheuristic)")
+    print("   4. Clarke-Wright Savings Algorithm")
+    print("   5. Cluster-First Route-Second")
+    print("   6. 2-opt & Or-opt Local Search")
+    print("   7. Multi-threaded Execution Strategy\n")
 
 if __name__ == "__main__":
     main()

@@ -7,6 +7,7 @@
 #include <set>
 #include <limits>
 #include <algorithm>
+#include <random>
 
 using namespace std;
 
@@ -99,6 +100,24 @@ private:
     // Adaptive strategy selector based on problem size
     SchedulingResult adaptiveSchedule();
     
+    // Genetic Algorithm implementation
+    struct Individual {
+        vector<Driver> assignments;
+        double fitness; // Total delivery time
+        
+        bool operator<(const Individual& other) const {
+            return fitness < other.fitness; // Lower time is better
+        }
+    };
+    
+    SchedulingResult geneticAlgorithm(int population_size, int generations);
+    Individual crossover(const Individual& parent1, const Individual& parent2);
+    void mutate(Individual& ind);
+    Individual createRandomIndividual();
+    
+    // Parallel Portfolio Strategy
+    SchedulingResult parallelPortfolioSchedule();
+
 public:
     DeliveryScheduler(const Graph& g, int depot, const vector<Order>& orders, int num_drivers);
     
