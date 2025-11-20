@@ -4,14 +4,29 @@
 #include <algorithm>
 #include <limits>
 #include <set>
-#include <future>
 #include <random>
+#include <future>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 using namespace std;
+
+// Thread-safe random number generator helpers
+namespace {
+    int getRandomInt(int min, int max) {
+        static thread_local std::mt19937 generator(std::random_device{}());
+        std::uniform_int_distribution<int> distribution(min, max);
+        return distribution(generator);
+    }
+
+    double getRandomDouble() {
+        static thread_local std::mt19937 generator(std::random_device{}());
+        std::uniform_real_distribution<double> distribution(0.0, 1.0);
+        return distribution(generator);
+    }
+}
 
 DeliveryScheduler::DeliveryScheduler(const Graph& g, int depot, const vector<Order>& orders, int num_drivers)
     : graph(g), depot_node(depot), orders(orders), num_drivers(num_drivers) {}
@@ -72,14 +87,22 @@ pair<double, vector<int>> DeliveryScheduler::getShortestPath(int from, int to) {
         return {0.0, {from}};
     }
     
-    // Check cache
-    if (path_cache.count(from) && path_cache[from].count(to)) {
-        return path_cache[from][to];
+    // Check cache with lock
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        if (path_cache.count(from) && path_cache[from].count(to)) {
+            return path_cache[from][to];
+        }
     }
     
-    // Compute and cache
+    // Compute (without lock to allow parallelism)
     auto result = dijkstra(from, to);
-    path_cache[from][to] = result;
+    
+    // Update cache with lock
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        path_cache[from][to] = result;
+    }
     
     return result;
 }
@@ -525,7 +548,7 @@ SchedulingResult DeliveryScheduler::simulatedAnnealing(SchedulingResult initial,
         double delta = neighbor_cost - current_cost;
         
         // Accept if better, or with probability based on temperature
-        if (delta < 0 || (rand() / (double)RAND_MAX) < exp(-delta / temperature)) {
+        if (delta < 0 || getRandomDouble() < exp(-delta / temperature)) {
             current = neighbor;
             
             if (neighbor_cost < calculateCost(best)) {
@@ -546,15 +569,15 @@ SchedulingResult DeliveryScheduler::perturbSolution(const SchedulingResult& curr
     if (neighbor.assignments.size() < 2) return neighbor;
     
     // Random move: swap an order between two drivers
-    int driver1 = rand() % neighbor.assignments.size();
-    int driver2 = rand() % neighbor.assignments.size();
+    int driver1 = getRandomInt(0, neighbor.assignments.size() - 1);
+    int driver2 = getRandomInt(0, neighbor.assignments.size() - 1);
     
     while (driver1 == driver2 && neighbor.assignments.size() > 1) {
-        driver2 = rand() % neighbor.assignments.size();
+        driver2 = getRandomInt(0, neighbor.assignments.size() - 1);
     }
     
     if (!neighbor.assignments[driver1].order_ids.empty()) {
-        int order_idx = rand() % neighbor.assignments[driver1].order_ids.size();
+        int order_idx = getRandomInt(0, neighbor.assignments[driver1].order_ids.size() - 1);
         int order_id = neighbor.assignments[driver1].order_ids[order_idx];
         
         // Move order from driver1 to driver2
@@ -744,12 +767,11 @@ DeliveryScheduler::Individual DeliveryScheduler::createRandomIndividual() {
     // We need num_drivers - 1 split points
     vector<int> splits;
     for (int i = 0; i < num_drivers - 1; i++) {
-        splits.push_back(rand() % (orders.size() + 1));
+        splits.push_back(getRandomInt(0, orders.size()));
     }
     sort(splits.begin(), splits.end());
     
     // Create drivers based on splits
-    int current_split_idx = 0;
     int current_order_idx = 0;
     
     for (int d = 0; d < num_drivers; d++) {
@@ -784,8 +806,8 @@ DeliveryScheduler::Individual DeliveryScheduler::crossover(const Individual& par
 
     // 2. Perform OX on the order sequence
     int size = p1_orders.size();
-    int start = rand() % size;
-    int end = rand() % size;
+    int start = getRandomInt(0, size - 1);
+    int end = getRandomInt(0, size - 1);
     if (start > end) swap(start, end);
     
     vector<int> child_orders(size, -1);
@@ -817,7 +839,7 @@ DeliveryScheduler::Individual DeliveryScheduler::crossover(const Individual& par
     Individual child;
     vector<int> splits;
     for (int i = 0; i < num_drivers - 1; i++) {
-        splits.push_back(rand() % (size + 1));
+        splits.push_back(getRandomInt(0, size));
     }
     sort(splits.begin(), splits.end());
     
@@ -845,8 +867,8 @@ void DeliveryScheduler::mutate(Individual& ind) {
     // Swap mutation: swap two orders between any drivers
     if (ind.assignments.empty()) return;
     
-    int d1_idx = rand() % ind.assignments.size();
-    int d2_idx = rand() % ind.assignments.size();
+    int d1_idx = getRandomInt(0, ind.assignments.size() - 1);
+    int d2_idx = getRandomInt(0, ind.assignments.size() - 1);
     
     Driver& d1 = ind.assignments[d1_idx];
     Driver& d2 = ind.assignments[d2_idx];
@@ -855,7 +877,7 @@ void DeliveryScheduler::mutate(Individual& ind) {
     
     // Move or Swap
     if (!d1.order_ids.empty()) {
-        int o1_idx = rand() % d1.order_ids.size();
+        int o1_idx = getRandomInt(0, d1.order_ids.size() - 1);
         int val = d1.order_ids[o1_idx];
         
         d1.order_ids.erase(d1.order_ids.begin() + o1_idx);
@@ -902,15 +924,15 @@ SchedulingResult DeliveryScheduler::geneticAlgorithm(int population_size, int ge
         // Breed rest
         while (new_population.size() < (size_t)population_size) {
             // Tournament Selection
-            int t1 = rand() % (population_size / 2); // Bias towards better half
-            int t2 = rand() % (population_size / 2);
+            int t1 = getRandomInt(0, population_size / 2 - 1); // Bias towards better half
+            int t2 = getRandomInt(0, population_size / 2 - 1);
             const Individual& p1 = population[t1];
             const Individual& p2 = population[t2];
             
             Individual child = crossover(p1, p2);
             
             // Mutation (10% chance)
-            if ((rand() % 100) < 10) {
+            if (getRandomInt(0, 99) < 10) {
                 mutate(child);
             }
             
@@ -943,18 +965,18 @@ SchedulingResult DeliveryScheduler::parallelPortfolioSchedule() {
     // Run multiple distinct algorithms in parallel and pick the best
     
     // 1. Simulated Annealing (Good for local optima escape)
-    auto future_sa = async(launch::async, [this]() {
+    auto future_sa = std::async(std::launch::async, [this]() {
         SchedulingResult initial = savingsAlgorithm();
         return simulatedAnnealing(initial, 1000);
     });
     
     // 2. Genetic Algorithm (Good for global exploration)
-    auto future_ga = async(launch::async, [this]() {
+    auto future_ga = std::async(std::launch::async, [this]() {
         return geneticAlgorithm(50, 100); // 50 pop, 100 gens
     });
     
     // 3. Cluster-First Route-Second (Good for structure)
-    auto future_cluster = async(launch::async, [this]() {
+    auto future_cluster = std::async(std::launch::async, [this]() {
         SchedulingResult res = clusterFirstRouteSecond();
         // Polish with heavy local search
         for (auto& d : res.assignments) {

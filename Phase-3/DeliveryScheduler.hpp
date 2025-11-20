@@ -8,6 +8,7 @@
 #include <limits>
 #include <algorithm>
 #include <random>
+#include <mutex>
 
 using namespace std;
 
@@ -50,6 +51,7 @@ private:
     int num_drivers;
     
     // Precomputed shortest paths cache (using Dijkstra)
+    mutable std::mutex cache_mutex;
     unordered_map<int, unordered_map<int, pair<double, vector<int>>>> path_cache;
     
     // Compute shortest path between two nodes (with caching)

@@ -14,8 +14,12 @@ PathInfo KShortestPaths::findShortestPath(int source, int target, const string& 
         return result;
     }
     
-    // Dijkstra's algorithm
-    unordered_map<int, double> dist;
+    // Use A* for distance mode, Dijkstra for others
+    bool use_astar = (mode == "distance");
+    const Node* target_node = use_astar ? graph.getNode(target) : nullptr;
+    
+    // Dijkstra/A* algorithm
+    unordered_map<int, double> dist; // g_score
     unordered_map<int, int> parent;
     priority_queue<pair<double, int>, vector<pair<double, int>>, greater<>> pq;
     
@@ -23,10 +27,19 @@ PathInfo KShortestPaths::findShortestPath(int source, int target, const string& 
     pq.push({0.0, source});
     
     while (!pq.empty()) {
-        auto [d, u] = pq.top();
+        auto [d, u] = pq.top(); // d is f_score (g + h)
         pq.pop();
         
-        if (d > dist[u]) continue;
+        // Check for stale entry
+        double h_u = 0.0;
+        if (use_astar) {
+            const Node* u_node = graph.getNode(u);
+            if (u_node && target_node) {
+                h_u = Graph::euclideanDistance(*u_node, *target_node);
+            }
+        }
+        
+        if (d > dist[u] + h_u + 1e-9) continue;
         
         if (u == target) {
             // Reconstruct path
@@ -50,12 +63,20 @@ PathInfo KShortestPaths::findShortestPath(int source, int target, const string& 
             if (forbidden_edges.count({u, v})) continue;
             
             double weight = graph.getEdgeWeight(edge_id, mode, 0);
-            double new_dist = dist[u] + weight;
+            double new_dist = dist[u] + weight; // new g_score
             
             if (dist.find(v) == dist.end() || new_dist < dist[v]) {
                 dist[v] = new_dist;
                 parent[v] = u;
-                pq.push({new_dist, v});
+                
+                double priority = new_dist;
+                if (use_astar) {
+                    const Node* v_node = graph.getNode(v);
+                    if (v_node && target_node) {
+                        priority += Graph::euclideanDistance(*v_node, *target_node);
+                    }
+                }
+                pq.push({priority, v});
             }
         }
     }
@@ -219,26 +240,41 @@ vector<PathInfo> KShortestPaths::findKShortestPathsHeuristic(int source, int tar
     result.push_back(candidates[0]);
     double shortest_length = candidates[0].length;
     
-    // Now select k-1 more paths with diversity
-    for (int i = 1; i < (int)candidates.size() && (int)result.size() < k; i++) {
-        // Calculate penalties for this candidate
-        double overlap_penalty_sum = 0.0;
-        double distance_penalty = calculateDeviation(candidates[i].length, shortest_length) / 100.0 + 0.1;
+    // Remove first candidate
+    candidates.erase(candidates.begin());
+    
+    // Greedily select k-1 more paths
+    while ((int)result.size() < k && !candidates.empty()) {
+        int best_idx = -1;
+        double min_penalty = numeric_limits<double>::max();
         
-        // Count how many paths have overlap > threshold
-        int paths_with_high_overlap = 0;
-        for (const auto& selected_path : result) {
-            double overlap_pct = calculateOverlap(selected_path.path, candidates[i].path);
-            if (overlap_pct > overlap_threshold) {
-                paths_with_high_overlap++;
+        for (size_t i = 0; i < candidates.size(); i++) {
+            // Calculate penalty if we add this candidate
+            double distance_penalty = calculateDeviation(candidates[i].length, shortest_length) / 100.0 + 0.1;
+            
+            // Count overlap with ALL currently selected paths
+            int paths_with_high_overlap = 0;
+            for (const auto& selected_path : result) {
+                double overlap_pct = calculateOverlap(selected_path.path, candidates[i].path);
+                if (overlap_pct > overlap_threshold) {
+                    paths_with_high_overlap++;
+                }
+            }
+            
+            double current_penalty = paths_with_high_overlap * distance_penalty;
+            
+            if (current_penalty < min_penalty) {
+                min_penalty = current_penalty;
+                best_idx = i;
             }
         }
         
-        overlap_penalty_sum = paths_with_high_overlap;
-        
-        // Total penalty as per spec
-        candidates[i].penalty = overlap_penalty_sum * distance_penalty;
-        result.push_back(candidates[i]);
+        if (best_idx != -1) {
+            result.push_back(candidates[best_idx]);
+            candidates.erase(candidates.begin() + best_idx);
+        } else {
+            break;
+        }
     }
     
     return result;

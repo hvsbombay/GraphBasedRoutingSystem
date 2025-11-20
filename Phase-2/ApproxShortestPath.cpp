@@ -114,8 +114,8 @@ double ApproxShortestPath::getLowerBound(int node, int target) {
     return max_bound;
 }
 
-double ApproxShortestPath::bidirectionalAStar(int source, int target) {
-    // Use simple A* for speed (not truly bidirectional for now)
+double ApproxShortestPath::bidirectionalAStar(int source, int target, double weight_factor) {
+    // Use Weighted A* for speed
     if (source == target) return 0.0;
     
     if (!graph.hasNode(source) || !graph.hasNode(target)) {
@@ -129,7 +129,7 @@ double ApproxShortestPath::bidirectionalAStar(int source, int target) {
     pq.push({0.0, source});
     
     int iterations = 0;
-    const int max_iterations = 50000; // Increased limit for larger graphs
+    const int max_iterations = 100000; // Increased limit
     
     while (!pq.empty() && iterations < max_iterations) {
         iterations++;
@@ -137,13 +137,8 @@ double ApproxShortestPath::bidirectionalAStar(int source, int target) {
         auto [d, u] = pq.top();
         pq.pop();
         
-        // Check if this is a stale entry
-        // Recompute heuristic to compare f-scores correctly
-        // d is f_score = g_score + h_score * 1.2
-        // dist[u] is best known g_score
-        // We want to skip if (d - h*1.2) > dist[u]
         double h = getLowerBound(u, target);
-        if (d > dist[u] + h * 1.2 + 1e-9) continue;
+        if (d > dist[u] + h * weight_factor + 1e-9) continue;
         
         if (u == target) {
             return dist[target];
@@ -156,13 +151,12 @@ double ApproxShortestPath::bidirectionalAStar(int source, int target) {
             if (dist.find(v) == dist.end() || new_dist < dist[v]) {
                 dist[v] = new_dist;
                 double heuristic = getLowerBound(v, target);
-                // Weighted A* with w=1.2 for speedup (allowed by acceptable error)
-                pq.push({new_dist + heuristic * 1.2, v}); 
+                // Weighted A*
+                pq.push({new_dist + heuristic * weight_factor, v}); 
             }
         }
     }
     
-    // If we exhausted iterations, return best estimate
     return dist.count(target) ? dist[target] : -1.0;
 }
 
@@ -170,8 +164,12 @@ double ApproxShortestPath::findApproxPath(int source, int target, double time_bu
     // Single query with time budget check
     auto start_time = chrono::high_resolution_clock::now();
     
-    // Use bidirectional A* with landmarks
-    double distance = bidirectionalAStar(source, target);
+    // Calculate weight factor based on acceptable error
+    // e.g., 5% error -> weight 1.05
+    double weight = 1.0 + (acceptable_error_pct / 100.0);
+    
+    // Use weighted A* with landmarks
+    double distance = bidirectionalAStar(source, target, weight);
     
     auto end_time = chrono::high_resolution_clock::now();
     double elapsed = chrono::duration<double, milli>(end_time - start_time).count();
@@ -181,7 +179,6 @@ double ApproxShortestPath::findApproxPath(int source, int target, double time_bu
         return distance;
     }
     
-    // If exceeded (shouldn't happen with iteration limits), still return result
     return distance;
 }
 
@@ -191,38 +188,32 @@ vector<double> ApproxShortestPath::findApproxPaths(const vector<pair<int, int>>&
     vector<double> results;
     
     auto start_time = chrono::high_resolution_clock::now();
-    double time_per_query = time_budget_ms / queries.size();
+    double weight = 1.0 + (acceptable_error_pct / 100.0);
     
     for (const auto& [source, target] : queries) {
-        auto query_start = chrono::high_resolution_clock::now();
-        
         // Check remaining time
         auto current_time = chrono::high_resolution_clock::now();
         double elapsed = chrono::duration<double, milli>(current_time - start_time).count();
         
         if (elapsed >= time_budget_ms * 0.95) {
-            // Running out of time, use simple heuristic
-            const Node* s_node = graph.getNode(source);
-            const Node* t_node = graph.getNode(target);
-            if (s_node && t_node) {
-                results.push_back(Graph::euclideanDistance(*s_node, *t_node));
-            } else {
-                results.push_back(-1.0);
+            // Running out of time, use simple heuristic or ALT lower bound
+            double lb = getLowerBound(source, target);
+            if (lb > 0) results.push_back(lb);
+            else {
+                const Node* s_node = graph.getNode(source);
+                const Node* t_node = graph.getNode(target);
+                if (s_node && t_node) {
+                    results.push_back(Graph::euclideanDistance(*s_node, *t_node));
+                } else {
+                    results.push_back(-1.0);
+                }
             }
             continue;
         }
         
-        // Use bidirectional A* with landmarks
-        double distance = bidirectionalAStar(source, target);
+        // Use weighted A* with landmarks
+        double distance = bidirectionalAStar(source, target, weight);
         results.push_back(distance);
-        
-        auto query_end = chrono::high_resolution_clock::now();
-        double query_time = chrono::duration<double, milli>(query_end - query_start).count();
-        
-        // Adjust strategy if queries are taking too long
-        if (query_time > time_per_query * 1.5) {
-            // Future queries should be faster - already handled by iteration limit
-        }
     }
     
     return results;

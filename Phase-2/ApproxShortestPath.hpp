@@ -19,8 +19,8 @@ private:
     void computeLandmarkDistances();
     double getLowerBound(int node, int target);
     
-    // Bidirectional A* search
-    double bidirectionalAStar(int source, int target);
+    // Bidirectional A* search (Weighted)
+    double bidirectionalAStar(int source, int target, double weight = 1.0);
     
 public:
     ApproxShortestPath(const Graph& g);

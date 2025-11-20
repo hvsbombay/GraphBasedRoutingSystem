@@ -158,9 +158,27 @@ int main(int argc, char* argv[]) {
     json queries_json;
     queries_file >> queries_json;
     
+    // Extract meta and events as per new specification
+    json meta;
+    json events;
+    
+    if (queries_json.contains("meta")) {
+        meta = queries_json["meta"];
+    }
+    
+    if (queries_json.contains("events")) {
+        events = queries_json["events"];
+    } else if (queries_json.is_array()) {
+        // Fallback for old format
+        events = queries_json;
+    } else {
+        // If it's a single object (not array) and no events key, treat as single query in array
+        events = json::array({queries_json});
+    }
+    
     vector<json> results;
     
-    for (const auto& query : queries_json) {
+    for (const auto& query : events) {
         auto start_time = chrono::high_resolution_clock::now();
         
         json result = process_query(query);
@@ -170,7 +188,12 @@ int main(int argc, char* argv[]) {
         results.push_back(result);
     }
     
-    json output = results;
+    // Write output with new format: {meta: {...}, results: [...]}
+    json output;
+    if (!meta.is_null()) {
+        output["meta"] = meta;
+    }
+    output["results"] = results;
     
     if (argc == 4) {
         ofstream output_file(argv[3]);
