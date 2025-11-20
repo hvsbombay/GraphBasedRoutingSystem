@@ -697,7 +697,7 @@ SchedulingResult DeliveryScheduler::adaptiveSchedule() {
         }
     }
     // Medium problems: use savings + local search
-    else if (total_orders <= 30) {
+    else if (total_orders <= 18) {
         result = savingsAlgorithm();
         
         // Apply or-opt to each route

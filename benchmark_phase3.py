@@ -62,8 +62,8 @@ def print_benchmark_results(scenarios):
     print("\nKey Insights:")
     print("- Adaptive algorithm selection based on problem size")
     print("- Small problems (<10 orders): Multiple algorithms + Simulated Annealing")
-    print("- Medium problems (10-30 orders): Clarke-Wright Savings + Or-opt")
-    print("- Large problems (>30 orders): Cluster-First Route-Second + 2-opt")
+    print("- Medium problems (10-18 orders): Clarke-Wright Savings + Or-opt")
+    print("- Large problems (>18 orders): Cluster-First Route-Second + 2-opt")
     print("="*80)
 
 def main():
