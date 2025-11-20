@@ -81,6 +81,24 @@ private:
     // Build route from order assignments ensuring pickup before dropoff
     vector<int> buildValidRoute(const vector<int>& order_ids, int start_node);
     
+    // Advanced algorithms
+    SchedulingResult savingsAlgorithm();  // Clarke-Wright Savings
+    SchedulingResult simulatedAnnealing(SchedulingResult initial, int max_iterations = 1000);
+    SchedulingResult clusterFirstRouteSecond();  // Spatial clustering approach
+    
+    // Helper for simulated annealing
+    SchedulingResult perturbSolution(const SchedulingResult& current);
+    double calculateCost(const SchedulingResult& solution);
+    
+    // Clustering helper
+    vector<vector<int>> clusterOrders(int num_clusters);
+    
+    // Or-opt move (remove and reinsert segment)
+    bool orOptMove(vector<int>& route, const vector<int>& order_ids);
+    
+    // Adaptive strategy selector based on problem size
+    SchedulingResult adaptiveSchedule();
+    
 public:
     DeliveryScheduler(const Graph& g, int depot, const vector<Order>& orders, int num_drivers);
     

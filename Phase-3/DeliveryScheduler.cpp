@@ -5,6 +5,10 @@
 #include <limits>
 #include <set>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 using namespace std;
 
 DeliveryScheduler::DeliveryScheduler(const Graph& g, int depot, const vector<Order>& orders, int num_drivers)
@@ -368,14 +372,318 @@ double DeliveryScheduler::calculateTotalDeliveryTime(const vector<Driver>& drive
     return total;
 }
 
+// Clarke-Wright Savings Algorithm for VRP
+SchedulingResult DeliveryScheduler::savingsAlgorithm() {
+    SchedulingResult result;
+    
+    // Start with each order on its own route from depot
+    vector<Driver> drivers;
+    for (size_t i = 0; i < orders.size() && i < (size_t)num_drivers; i++) {
+        Driver driver(i);
+        driver.order_ids.push_back(i);
+        driver.route = buildValidRoute(driver.order_ids, depot_node);
+        driver.total_time = calculateRouteTime(driver.route);
+        drivers.push_back(driver);
+    }
+    
+    // Calculate savings for merging routes
+    struct Saving {
+        int order_i, order_j;
+        double savings;
+        bool operator<(const Saving& other) const {
+            return savings > other.savings;  // Descending order
+        }
+    };
+    
+    vector<Saving> savings_list;
+    for (size_t i = 0; i < orders.size(); i++) {
+        for (size_t j = i + 1; j < orders.size(); j++) {
+            auto [d_depot_i, p1] = getShortestPath(depot_node, orders[i].pickup_node);
+            auto [d_i_depot, p2] = getShortestPath(orders[i].dropoff_node, depot_node);
+            auto [d_depot_j, p3] = getShortestPath(depot_node, orders[j].pickup_node);
+            auto [d_j_depot, p4] = getShortestPath(orders[j].dropoff_node, depot_node);
+            auto [d_i_j, p5] = getShortestPath(orders[i].dropoff_node, orders[j].pickup_node);
+            
+            double savings = (d_depot_i + d_i_depot) + (d_depot_j + d_j_depot) - (d_depot_i + d_i_j + d_j_depot);
+            if (savings > 0) {
+                savings_list.push_back({(int)i, (int)j, savings});
+            }
+        }
+    }
+    
+    sort(savings_list.begin(), savings_list.end());
+    
+    // Merge routes based on savings (simplified version)
+    // Track which driver has which order
+    vector<int> order_to_driver(orders.size());
+    for (size_t i = 0; i < drivers.size(); i++) {
+        for (int order_id : drivers[i].order_ids) {
+            order_to_driver[order_id] = i;
+        }
+    }
+    
+    for (const auto& saving : savings_list) {
+        if (drivers.size() >= (size_t)num_drivers) break;
+        
+        int driver_i = order_to_driver[saving.order_i];
+        int driver_j = order_to_driver[saving.order_j];
+        
+        if (driver_i != driver_j) {
+            // Merge driver_j into driver_i
+            drivers[driver_i].order_ids.insert(drivers[driver_i].order_ids.end(),
+                                              drivers[driver_j].order_ids.begin(),
+                                              drivers[driver_j].order_ids.end());
+            drivers[driver_i].route = buildValidRoute(drivers[driver_i].order_ids, depot_node);
+            drivers[driver_i].total_time = calculateRouteTime(drivers[driver_i].route);
+            
+            // Update order mappings
+            for (int order_id : drivers[driver_j].order_ids) {
+                order_to_driver[order_id] = driver_i;
+            }
+            
+            // Remove driver_j
+            drivers.erase(drivers.begin() + driver_j);
+            
+            // Update driver indices
+            for (int& d : order_to_driver) {
+                if (d > driver_j) d--;
+            }
+        }
+    }
+    
+    result.assignments = drivers;
+    result.total_delivery_time = calculateTotalDeliveryTime(drivers);
+    return result;
+}
+
+// Simulated Annealing for local optimization
+SchedulingResult DeliveryScheduler::simulatedAnnealing(SchedulingResult initial, int max_iterations) {
+    SchedulingResult current = initial;
+    SchedulingResult best = current;
+    
+    double temperature = 1000.0;
+    double cooling_rate = 0.995;
+    double min_temperature = 1.0;
+    
+    for (int iter = 0; iter < max_iterations && temperature > min_temperature; iter++) {
+        SchedulingResult neighbor = perturbSolution(current);
+        
+        double current_cost = calculateCost(current);
+        double neighbor_cost = calculateCost(neighbor);
+        double delta = neighbor_cost - current_cost;
+        
+        // Accept if better, or with probability based on temperature
+        if (delta < 0 || (rand() / (double)RAND_MAX) < exp(-delta / temperature)) {
+            current = neighbor;
+            
+            if (neighbor_cost < calculateCost(best)) {
+                best = neighbor;
+            }
+        }
+        
+        temperature *= cooling_rate;
+    }
+    
+    return best;
+}
+
+// Perturb solution for simulated annealing
+SchedulingResult DeliveryScheduler::perturbSolution(const SchedulingResult& current) {
+    SchedulingResult neighbor = current;
+    
+    if (neighbor.assignments.size() < 2) return neighbor;
+    
+    // Random move: swap an order between two drivers
+    int driver1 = rand() % neighbor.assignments.size();
+    int driver2 = rand() % neighbor.assignments.size();
+    
+    while (driver1 == driver2 && neighbor.assignments.size() > 1) {
+        driver2 = rand() % neighbor.assignments.size();
+    }
+    
+    if (!neighbor.assignments[driver1].order_ids.empty()) {
+        int order_idx = rand() % neighbor.assignments[driver1].order_ids.size();
+        int order_id = neighbor.assignments[driver1].order_ids[order_idx];
+        
+        // Move order from driver1 to driver2
+        neighbor.assignments[driver1].order_ids.erase(
+            neighbor.assignments[driver1].order_ids.begin() + order_idx);
+        neighbor.assignments[driver2].order_ids.push_back(order_id);
+        
+        // Rebuild routes
+        neighbor.assignments[driver1].route = buildValidRoute(
+            neighbor.assignments[driver1].order_ids, depot_node);
+        neighbor.assignments[driver1].total_time = calculateRouteTime(
+            neighbor.assignments[driver1].route);
+        
+        neighbor.assignments[driver2].route = buildValidRoute(
+            neighbor.assignments[driver2].order_ids, depot_node);
+        neighbor.assignments[driver2].total_time = calculateRouteTime(
+            neighbor.assignments[driver2].route);
+        
+        neighbor.total_delivery_time = calculateTotalDeliveryTime(neighbor.assignments);
+    }
+    
+    return neighbor;
+}
+
+// Calculate solution cost (total delivery time)
+double DeliveryScheduler::calculateCost(const SchedulingResult& solution) {
+    return solution.total_delivery_time;
+}
+
+// Cluster-First Route-Second approach
+SchedulingResult DeliveryScheduler::clusterFirstRouteSecond() {
+    // Cluster orders spatially, then solve TSP for each cluster
+    vector<vector<int>> clusters = clusterOrders(num_drivers);
+    
+    SchedulingResult result;
+    vector<Driver> drivers;
+    
+    for (int d = 0; d < num_drivers && d < (int)clusters.size(); d++) {
+        Driver driver(d);
+        driver.order_ids = clusters[d];
+        driver.route = buildValidRoute(driver.order_ids, depot_node);
+        driver.total_time = calculateRouteTime(driver.route);
+        drivers.push_back(driver);
+    }
+    
+    result.assignments = drivers;
+    result.total_delivery_time = calculateTotalDeliveryTime(drivers);
+    return result;
+}
+
+// Simple K-means clustering for orders
+vector<vector<int>> DeliveryScheduler::clusterOrders(int num_clusters) {
+    vector<vector<int>> clusters(num_clusters);
+    
+    if (orders.empty()) return clusters;
+    
+    // Use pickup locations for clustering
+    vector<pair<double, double>> pickup_coords;
+    for (const auto& order : orders) {
+        const Node* node = graph.getNode(order.pickup_node);
+        if (node) {
+            pickup_coords.push_back({node->lat, node->lon});
+        }
+    }
+    
+    // Simple spatial assignment based on angle from depot
+    const Node* depot = graph.getNode(depot_node);
+    if (!depot) return clusters;
+    
+    for (size_t i = 0; i < orders.size(); i++) {
+        const Node* pickup = graph.getNode(orders[i].pickup_node);
+        if (!pickup) continue;
+        
+        double angle = atan2(pickup->lat - depot->lat, pickup->lon - depot->lon);
+        int cluster_id = (int)((angle + M_PI) / (2 * M_PI) * num_clusters) % num_clusters;
+        clusters[cluster_id].push_back(i);
+    }
+    
+    return clusters;
+}
+
+// Or-opt move: remove and reinsert a segment
+bool DeliveryScheduler::orOptMove(vector<int>& route, const vector<int>& order_ids) {
+    if (route.size() < 5) return false;  // Need sufficient nodes
+    
+    double original_time = calculateRouteTime(route);
+    vector<int> best_route = route;
+    double best_time = original_time;
+    
+    // Try removing segments of size 1-3 and reinserting elsewhere
+    for (int seg_size = 1; seg_size <= 3 && seg_size < (int)route.size() - 2; seg_size++) {
+        for (size_t i = 1; i < route.size() - seg_size; i++) {
+            // Extract segment
+            vector<int> segment(route.begin() + i, route.begin() + i + seg_size);
+            vector<int> temp_route = route;
+            temp_route.erase(temp_route.begin() + i, temp_route.begin() + i + seg_size);
+            
+            // Try inserting at each position
+            for (size_t j = 1; j < temp_route.size(); j++) {
+                vector<int> new_route = temp_route;
+                new_route.insert(new_route.begin() + j, segment.begin(), segment.end());
+                
+                if (validateRoute(new_route, order_ids)) {
+                    double new_time = calculateRouteTime(new_route);
+                    if (new_time < best_time) {
+                        best_time = new_time;
+                        best_route = new_route;
+                    }
+                }
+            }
+        }
+    }
+    
+    if (best_time < original_time - 1e-6) {
+        route = best_route;
+        return true;
+    }
+    
+    return false;
+}
+
+// Adaptive strategy: choose algorithm based on problem size
+SchedulingResult DeliveryScheduler::adaptiveSchedule() {
+    int total_orders = orders.size();
+    
+    SchedulingResult result;
+    
+    // Small problems: try multiple algorithms and pick best
+    if (total_orders <= 10) {
+        SchedulingResult greedy = greedyAssignment();
+        SchedulingResult savings = savingsAlgorithm();
+        SchedulingResult cluster = clusterFirstRouteSecond();
+        
+        // Apply simulated annealing to best initial solution
+        if (greedy.total_delivery_time <= savings.total_delivery_time &&
+            greedy.total_delivery_time <= cluster.total_delivery_time) {
+            result = simulatedAnnealing(greedy, 500);
+        } else if (savings.total_delivery_time <= cluster.total_delivery_time) {
+            result = simulatedAnnealing(savings, 500);
+        } else {
+            result = simulatedAnnealing(cluster, 500);
+        }
+    }
+    // Medium problems: use savings + local search
+    else if (total_orders <= 30) {
+        result = savingsAlgorithm();
+        
+        // Apply or-opt to each route
+        for (auto& driver : result.assignments) {
+            orOptMove(driver.route, driver.order_ids);
+            driver.total_time = calculateRouteTime(driver.route);
+        }
+        result.total_delivery_time = calculateTotalDeliveryTime(result.assignments);
+    }
+    // Large problems: cluster-first for speed
+    else {
+        result = clusterFirstRouteSecond();
+        
+        // Light optimization with 2-opt
+        for (auto& driver : result.assignments) {
+            if (driver.route.size() > 3) {
+                twoOptOptimization(driver.route);
+                if (validateRoute(driver.route, driver.order_ids)) {
+                    driver.total_time = calculateRouteTime(driver.route);
+                }
+            }
+        }
+        result.total_delivery_time = calculateTotalDeliveryTime(result.assignments);
+    }
+    
+    return result;
+}
+
 // Main scheduling function
 SchedulingResult DeliveryScheduler::schedule() {
     if (orders.empty()) {
         return SchedulingResult();
     }
     
-    // Use greedy assignment strategy
-    SchedulingResult result = greedyAssignment();
+    // Use adaptive strategy to select best algorithm
+    SchedulingResult result = adaptiveSchedule();
     
     return result;
 }
