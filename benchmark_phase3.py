@@ -92,15 +92,13 @@ def main():
     # Scenario 2: Medium problem
     print("Scenario 2: Medium Problem (15 orders, 3 drivers)...")
     
-    # Generate medium test case
-    queries_data = {
-        "meta": {"id": "medium_bench"},
-        "events": [{
-            "type": "delivery_scheduling",
+    # Generate medium test case (List of query objects)
+    queries_data = [
+        {
             "orders": [{"order_id": i, "pickup": i*4, "dropoff": i*4+1} for i in range(15)],
             "fleet": {"num_delievery_guys": 3, "depot_node": 0}
-        }]
-    }
+        }
+    ]
     
     with open("bench_queries_medium.json", "w") as f:
         json.dump(queries_data, f)
@@ -122,7 +120,7 @@ def main():
             })
     
     # Scenario 3: Large problem (existing complex test)
-    print("Scenario 3: Large Problem (20 orders, 5 drivers)...")
+    print("Scenario 3: Large Problem (Complex Test Case)...")
     elapsed, success = run_phase3(
         "tests/test_graph_phase3_complex.json",
         "tests/test_queries_phase3_complex.json",
@@ -130,9 +128,19 @@ def main():
     )
     if success:
         results = analyze_results("bench_p3_large.json")
-        if results:
+        if len(results) > 1:
+            # Use the second query which is larger/more complex
+            r = results[1]
             scenarios.append({
-                "name": "Large (20 orders)",
+                "name": "Large (Complex)",
+                "orders": r["num_orders"],
+                "drivers": r["num_drivers"],
+                "proc_time": r["processing_time_ms"],
+                "quality": r["total_delivery_time"]
+            })
+        elif results:
+             scenarios.append({
+                "name": "Large (Complex)",
                 "orders": results[0]["num_orders"],
                 "drivers": results[0]["num_drivers"],
                 "proc_time": results[0]["processing_time_ms"],

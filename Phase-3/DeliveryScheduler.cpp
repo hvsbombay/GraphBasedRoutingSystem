@@ -376,17 +376,14 @@ double DeliveryScheduler::calculateTotalDeliveryTime(const vector<Driver>& drive
 SchedulingResult DeliveryScheduler::savingsAlgorithm() {
     SchedulingResult result;
     
-    // Start with each order on its own route from depot
-    vector<Driver> drivers;
-    for (size_t i = 0; i < orders.size() && i < (size_t)num_drivers; i++) {
-        Driver driver(i);
-        driver.order_ids.push_back(i);
-        driver.route = buildValidRoute(driver.order_ids, depot_node);
-        driver.total_time = calculateRouteTime(driver.route);
-        drivers.push_back(driver);
+    // 1. Start with each order on its own route
+    // We use a list of order lists to represent routes
+    vector<vector<int>> routes;
+    for (size_t i = 0; i < orders.size(); i++) {
+        routes.push_back({(int)i});
     }
     
-    // Calculate savings for merging routes
+    // 2. Calculate savings for merging routes
     struct Saving {
         int order_i, order_j;
         double savings;
@@ -404,6 +401,9 @@ SchedulingResult DeliveryScheduler::savingsAlgorithm() {
             auto [d_j_depot, p4] = getShortestPath(orders[j].dropoff_node, depot_node);
             auto [d_i_j, p5] = getShortestPath(orders[i].dropoff_node, orders[j].pickup_node);
             
+            // Savings = Cost(i) + Cost(j) - Cost(i+j)
+            // Cost(i) = depot->i->depot
+            // Cost(i+j) = depot->i->j->depot
             double savings = (d_depot_i + d_i_depot) + (d_depot_j + d_j_depot) - (d_depot_i + d_i_j + d_j_depot);
             if (savings > 0) {
                 savings_list.push_back({(int)i, (int)j, savings});
@@ -413,42 +413,92 @@ SchedulingResult DeliveryScheduler::savingsAlgorithm() {
     
     sort(savings_list.begin(), savings_list.end());
     
-    // Merge routes based on savings (simplified version)
-    // Track which driver has which order
-    vector<int> order_to_driver(orders.size());
-    for (size_t i = 0; i < drivers.size(); i++) {
-        for (int order_id : drivers[i].order_ids) {
-            order_to_driver[order_id] = i;
+    // 3. Merge routes based on savings
+    // Map each order to its current route index
+    vector<int> order_to_route(orders.size());
+    for (size_t i = 0; i < orders.size(); i++) {
+        order_to_route[i] = i;
+    }
+    
+    // Track active routes (true if route index is valid)
+    vector<bool> route_active(orders.size(), true);
+    int num_routes = orders.size();
+    
+    for (const auto& saving : savings_list) {
+        // If we have reached the desired number of drivers, we can stop merging based on savings
+        // But usually we want to merge as much as possible to reduce cost, then handle fleet constraint
+        
+        int r_i = order_to_route[saving.order_i];
+        int r_j = order_to_route[saving.order_j];
+        
+        if (r_i != r_j && route_active[r_i] && route_active[r_j]) {
+            // Check if merge is valid (i at end of r_i, j at start of r_j)
+            // For simplicity in this VRP, we just append order lists and let buildValidRoute handle the sequence
+            // This is a "Cluster-based" interpretation of Savings
+            
+            // Merge r_j into r_i
+            routes[r_i].insert(routes[r_i].end(), routes[r_j].begin(), routes[r_j].end());
+            
+            // Update mapping
+            for (int order_id : routes[r_j]) {
+                order_to_route[order_id] = r_i;
+            }
+            
+            // Deactivate r_j
+            route_active[r_j] = false;
+            routes[r_j].clear();
+            num_routes--;
         }
     }
     
-    for (const auto& saving : savings_list) {
-        if (drivers.size() >= (size_t)num_drivers) break;
+    // 4. Enforce fleet size constraint
+    // Collect all active routes
+    vector<vector<int>> final_routes;
+    for (size_t i = 0; i < routes.size(); i++) {
+        if (route_active[i] && !routes[i].empty()) {
+            final_routes.push_back(routes[i]);
+        }
+    }
+    
+    // If we have too many routes, merge the smallest ones
+    while (final_routes.size() > (size_t)num_drivers) {
+        // Find smallest route
+        size_t min_size_idx = 0;
+        size_t min_size = final_routes[0].size();
         
-        int driver_i = order_to_driver[saving.order_i];
-        int driver_j = order_to_driver[saving.order_j];
-        
-        if (driver_i != driver_j) {
-            // Merge driver_j into driver_i
-            drivers[driver_i].order_ids.insert(drivers[driver_i].order_ids.end(),
-                                              drivers[driver_j].order_ids.begin(),
-                                              drivers[driver_j].order_ids.end());
-            drivers[driver_i].route = buildValidRoute(drivers[driver_i].order_ids, depot_node);
-            drivers[driver_i].total_time = calculateRouteTime(drivers[driver_i].route);
-            
-            // Update order mappings
-            for (int order_id : drivers[driver_j].order_ids) {
-                order_to_driver[order_id] = driver_i;
-            }
-            
-            // Remove driver_j
-            drivers.erase(drivers.begin() + driver_j);
-            
-            // Update driver indices
-            for (int& d : order_to_driver) {
-                if (d > driver_j) d--;
+        for (size_t i = 1; i < final_routes.size(); i++) {
+            if (final_routes[i].size() < min_size) {
+                min_size = final_routes[i].size();
+                min_size_idx = i;
             }
         }
+        
+        // Merge it into the "nearest" other route (or just the first one for simplicity)
+        // Ideally we check centroids, but here we just merge to 0 (or next available)
+        size_t target_idx = (min_size_idx == 0) ? 1 : 0;
+        
+        final_routes[target_idx].insert(final_routes[target_idx].end(), 
+                                       final_routes[min_size_idx].begin(), 
+                                       final_routes[min_size_idx].end());
+        
+        final_routes.erase(final_routes.begin() + min_size_idx);
+    }
+    
+    // 5. Convert to Drivers
+    vector<Driver> drivers;
+    for (size_t i = 0; i < final_routes.size(); i++) {
+        Driver driver(i);
+        driver.order_ids = final_routes[i];
+        driver.route = buildValidRoute(driver.order_ids, depot_node);
+        driver.total_time = calculateRouteTime(driver.route);
+        drivers.push_back(driver);
+    }
+    
+    // If we have fewer routes than drivers, add empty drivers
+    for (size_t i = final_routes.size(); i < (size_t)num_drivers; i++) {
+        Driver driver(i);
+        driver.route = {depot_node};
+        drivers.push_back(driver);
     }
     
     result.assignments = drivers;
