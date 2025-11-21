@@ -171,6 +171,22 @@ CS293_Project/
 - Heuristic Path Scoring: Overlap ratio + distance deviation
 - Batch Processing: Time budget management (e.g., 1000ms for 20 queries)
 
+### Phase 3: Delivery Scheduling & Dynamic Rerouting
+
+**Capabilities:**
+
+- **Multi-driver VRP core:** Handles large order batches, keeps pickup-before-dropoff invariant, and balances load across drivers.
+- **Dynamic road block support:** Accepts incidents (accident, construction, flooding, traffic, closure), removes or restores edges as timers expire, and invalidates caches whenever topology changes.
+- **Realistic benchmarking harness:** `benchmark_realistic.py` covers Small → Massive (200–20k nodes) scenarios and records processing/delivery times plus disruption counts for reports.
+
+**Algorithms & Techniques:**
+
+- Parallel distance-matrix construction with bidirectional A* lookups for fast costs
+- Portfolio optimizer (genetic algorithm, simulated annealing, clustering heuristics) executed via `std::async`
+- Local improvement moves (2-opt/or-opt) applied on assignment plans
+- Thread-safe road block manager guarded by mutexes; uses `thread_local` RNG for reproducible heuristics
+- Metrics instrumentation (`processing_time`, `road_blocks_count`) emitted in JSON output for every run
+
 ## Input/Output Format
 
 ### Graph JSON Format
