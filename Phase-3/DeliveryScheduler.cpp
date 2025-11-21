@@ -28,105 +28,254 @@ namespace {
     }
 }
 
-DeliveryScheduler::DeliveryScheduler(const Graph& g, int depot, const vector<Order>& orders, int num_drivers)
-    : graph(g), depot_node(depot), orders(orders), num_drivers(num_drivers) {}
+// ============================================================================
+// REAL-WORLD SCENARIO HANDLING: Dynamic Road Blocks
+// ============================================================================
 
-// Dijkstra's algorithm to find shortest path
-pair<double, vector<int>> DeliveryScheduler::dijkstra(int source, int target) {
-    const double INF = numeric_limits<double>::infinity();
+void DeliveryScheduler::addRoadBlock(int edge_id, double start_time, double duration, const string& reason) {
+    RoadBlock block(edge_id, start_time, duration, reason);
+    road_blocks.push_back(block);
+}
+
+void DeliveryScheduler::applyRoadBlocks(double current_time) {
+    std::lock_guard<std::mutex> lock(block_mutex);
+    
+    for (const auto& block : road_blocks) {
+        if (current_time >= block.start_time && 
+            current_time < block.start_time + block.duration) {
+            
+            if (currently_blocked_edges.find(block.edge_id) == currently_blocked_edges.end()) {
+                // Block this edge in the graph
+                graph.removeEdge(block.edge_id);
+                currently_blocked_edges.insert(block.edge_id);
+            }
+        }
+    }
+}
+
+void DeliveryScheduler::clearExpiredBlocks(double current_time) {
+    std::lock_guard<std::mutex> lock(block_mutex);
+    
+    set<int> to_restore;
+    for (int edge_id : currently_blocked_edges) {
+        bool still_blocked = false;
+        
+        for (const auto& block : road_blocks) {
+            if (block.edge_id == edge_id &&
+                current_time >= block.start_time && 
+                current_time < block.start_time + block.duration) {
+                still_blocked = true;
+                break;
+            }
+        }
+        
+        if (!still_blocked) {
+            to_restore.insert(edge_id);
+        }
+    }
+    
+    // Restore edges that are no longer blocked
+    for (int edge_id : to_restore) {
+        Edge restored_edge;
+        graph.modifyEdge(edge_id, restored_edge, false);  // Restore without patch
+        currently_blocked_edges.erase(edge_id);
+    }
+}
+
+bool DeliveryScheduler::isEdgeBlocked(int edge_id) const {
+    std::lock_guard<std::mutex> lock(block_mutex);
+    return currently_blocked_edges.find(edge_id) != currently_blocked_edges.end();
+}
+
+void DeliveryScheduler::invalidateBlockedPaths() {
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    
+    // Clear entire path cache when road blocks occur
+    // In a production system, we'd selectively invalidate only affected paths
+    path_cache.clear();
+    
+    // Also clear distance matrix - it needs to be rebuilt
+    dist_matrix.matrix.clear();
+    dist_matrix.node_to_index.clear();
+    dist_matrix.index_to_node.clear();
+    dist_matrix.size = 0;
+}
+
+SchedulingResult DeliveryScheduler::replanWithBlocks(const SchedulingResult& original_plan, double current_time) {
+    // Apply current road blocks
+    applyRoadBlocks(current_time);
+    
+    // Invalidate cached paths that use blocked edges
+    invalidateBlockedPaths();
+    
+    // Rebuild distance matrix with current graph state
+    buildDistanceMatrix();
+    
+    // Recompute the schedule
+    return scheduleDelivery();
+}
+
+DeliveryScheduler::DeliveryScheduler(Graph& g, int depot, const vector<Order>& orders, int num_drivers)
+    : graph(g), depot_node(depot), orders(orders), num_drivers(num_drivers) {
+    // Precompute distance matrix for all relevant nodes
+    buildDistanceMatrix();
+}
+
+// Bidirectional A* for faster pathfinding
+pair<double, vector<int>> DeliveryScheduler::findPathBidirectionalAStar(int source, int target) {
+    if (source == target) return {0.0, {source}};
+
+    // Use the graph's heuristic if available, or Euclidean distance
+    auto heuristic = [&](int u, int v) {
+        const Node* n1 = graph.getNode(u);
+        const Node* n2 = graph.getNode(v);
+        if (!n1 || !n2) return 0.0;
+        
+        // Haversine approximation or simple Euclidean on lat/lon
+        double dLat = n1->lat - n2->lat;
+        double dLon = n1->lon - n2->lon;
+        return sqrt(dLat*dLat + dLon*dLon) * 111000.0 / 13.8; // Approx meters to seconds (assuming ~50km/h)
+    };
+
+    // Fallback to Standard A* for robustness
+    priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pq;
     unordered_map<int, double> dist;
     unordered_map<int, int> parent;
-    priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pq;
     
-    // Initialize
-    for (const auto& [node_id, node] : graph.getNodes()) {
-        dist[node_id] = INF;
-    }
     dist[source] = 0.0;
-    pq.push({0.0, source});
+    pq.push({heuristic(source, target), source});
     parent[source] = -1;
     
-    while (!pq.empty()) {
-        auto [d, u] = pq.top();
+    while(!pq.empty()){
+        auto [f, u] = pq.top();
         pq.pop();
         
-        if (d > dist[u]) continue;
-        if (u == target) break;  // Early termination
+        if(f - heuristic(u, target) > dist[u]) continue;
+        if(u == target) break;
         
-        const auto& neighbors = graph.getNeighbors(u);
-        for (const auto& [v, edge_id] : neighbors) {
-            double weight = graph.getEdgeWeight(edge_id, "time", 0);
-            
-            if (dist[u] + weight < dist[v]) {
-                dist[v] = dist[u] + weight;
+        for(const auto& [v, edge_id] : graph.getNeighbors(u)){
+            double w = graph.getEdgeWeight(edge_id, "time", 0);
+            if(!dist.count(v) || dist[u] + w < dist[v]){
+                dist[v] = dist[u] + w;
                 parent[v] = u;
-                pq.push({dist[v], v});
+                pq.push({dist[v] + heuristic(v, target), v});
             }
         }
     }
     
-    // Reconstruct path
-    vector<int> path;
-    if (dist[target] == INF) {
-        return {INF, path};  // No path exists
-    }
+    if(!dist.count(target)) return {numeric_limits<double>::infinity(), {}};
     
+    vector<int> path;
     int curr = target;
-    while (curr != -1) {
+    while(curr != -1){
         path.push_back(curr);
         curr = parent[curr];
     }
     reverse(path.begin(), path.end());
-    
     return {dist[target], path};
+}
+
+void DeliveryScheduler::buildDistanceMatrix() {
+    set<int> key_nodes;
+    key_nodes.insert(depot_node);
+    for(const auto& o : orders) {
+        key_nodes.insert(o.pickup_node);
+        key_nodes.insert(o.dropoff_node);
+    }
+    
+    vector<int> nodes(key_nodes.begin(), key_nodes.end());
+    dist_matrix.init(nodes);
+    
+    // Parallelize matrix computation
+    vector<future<void>> futures;
+    int num_threads = thread::hardware_concurrency();
+    int chunk_size = (nodes.size() + num_threads - 1) / num_threads;
+    
+    for(int t=0; t<num_threads; ++t) {
+        futures.push_back(async(launch::async, [&, t]() {
+            int start = t * chunk_size;
+            int end = min((int)nodes.size(), start + chunk_size);
+            
+            for(int i=start; i<end; ++i) {
+                for(int j=0; j<(int)nodes.size(); ++j) {
+                    if(i == j) continue;
+                    // Use A* for fast computation
+                    auto [dist, path] = findPathBidirectionalAStar(nodes[i], nodes[j]);
+                    
+                    // Store in matrix (thread-safe because each index is unique)
+                    // dist_matrix.set uses a flat vector, we can access directly if we want, 
+                    // but set() is safe if we don't resize.
+                    // However, dist_matrix.set writes to specific indices.
+                    // Since i is unique per thread, row i is exclusive to this thread.
+                    // So we can write safely.
+                    const_cast<DistanceMatrix&>(dist_matrix).set(nodes[i], nodes[j], dist);
+                    
+                    // Also cache the path if needed (optional, might consume memory)
+                    // {
+                    //    lock_guard<mutex> lock(cache_mutex);
+                    //    path_cache[nodes[i]][nodes[j]] = {dist, path};
+                    // }
+                }
+            }
+        }));
+    }
+    
+    for(auto& f : futures) f.wait();
 }
 
 // Get shortest path with caching
 pair<double, vector<int>> DeliveryScheduler::getShortestPath(int from, int to) {
-    if (from == to) {
-        return {0.0, {from}};
-    }
+    if (from == to) return {0.0, {from}};
     
-    // Check cache with lock
-    {
-        std::lock_guard<std::mutex> lock(cache_mutex);
-        if (path_cache.count(from) && path_cache[from].count(to)) {
-            return path_cache[from][to];
+    // Check matrix first for distance
+    double mat_dist = dist_matrix.get(from, to);
+    if (mat_dist != numeric_limits<double>::infinity()) {
+        // If we need the path vector, we might still need to compute it or reconstruct it.
+        // For VRP optimization, we mostly need distance.
+        // But this function returns pair<double, vector<int>>.
+        // If the caller needs the path, we must compute it.
+        // Let's check cache.
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex);
+            if (path_cache.count(from) && path_cache[from].count(to)) {
+                return path_cache[from][to];
+            }
         }
+        // If not in cache, compute A*
+        auto result = findPathBidirectionalAStar(from, to);
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex);
+            path_cache[from][to] = result;
+        }
+        return result;
     }
     
-    // Compute (without lock to allow parallelism)
-    auto result = dijkstra(from, to);
-    
-    // Update cache with lock
-    {
-        std::lock_guard<std::mutex> lock(cache_mutex);
-        path_cache[from][to] = result;
-    }
-    
-    return result;
+    // Fallback
+    return findPathBidirectionalAStar(from, to);
 }
 
+// Calculate route time using Matrix (Fast)
 // Calculate total time for a route
 double DeliveryScheduler::calculateRouteTime(const vector<int>& route) {
     if (route.size() < 2) return 0.0;
     
     double total_time = 0.0;
     for (size_t i = 0; i < route.size() - 1; i++) {
-        auto [time, path] = getShortestPath(route[i], route[i + 1]);
-        if (time == numeric_limits<double>::infinity()) {
-            return time;  // Unreachable
+        double d = dist_matrix.get(route[i], route[i+1]);
+        if (d == numeric_limits<double>::infinity()) {
+            // Fallback to slow calculation if not in matrix
+            auto [time, path] = getShortestPath(route[i], route[i + 1]);
+            d = time;
         }
-        total_time += time;
+        total_time += d;
     }
-    
     return total_time;
 }
 
 // Validate that pickup precedes dropoff for all orders
-bool DeliveryScheduler::validateRoute(const vector<int>& route, const vector<int>& order_ids) {
-    for (int order_id : order_ids) {
-        const Order& order = orders[order_id];
+bool DeliveryScheduler::validateRoute(const vector<int>& route, const vector<int>& order_indices) {
+    for (int order_idx : order_indices) {
+        const Order& order = orders[order_idx];
         
         // Find positions of pickup and dropoff in route
         int pickup_pos = -1, dropoff_pos = -1;
@@ -222,11 +371,11 @@ void DeliveryScheduler::twoOptOptimization(vector<int>& route) {
 
 // Build valid route ensuring pickup before dropoff
 // Uses interleaved strategy: can deliver orders as soon as picked up
-vector<int> DeliveryScheduler::buildValidRoute(const vector<int>& order_ids, int start_node) {
+vector<int> DeliveryScheduler::buildValidRoute(const vector<int>& order_indices, int start_node) {
     vector<int> route;
     route.push_back(start_node);
     
-    if (order_ids.empty()) {
+    if (order_indices.empty()) {
         return route;
     }
     
@@ -237,33 +386,45 @@ vector<int> DeliveryScheduler::buildValidRoute(const vector<int>& order_ids, int
     int current = start_node;
     
     // Continue until all orders are delivered
-    while (delivered.size() < order_ids.size()) {
+    while (delivered.size() < order_indices.size()) {
         int next_node = -1;
         double min_dist = numeric_limits<double>::infinity();
         bool is_pickup = false;
-        int selected_order = -1;
+        int selected_order_idx = -1;
         
         // Option 1: Pick up a new order (if not all picked up)
-        for (int order_id : order_ids) {
-            if (picked_up.count(order_id) == 0) {
-                int pickup = orders[order_id].pickup_node;
-                auto [dist, path] = getShortestPath(current, pickup);
+        for (int order_idx : order_indices) {
+            if (picked_up.count(order_idx) == 0) {
+                int pickup = orders[order_idx].pickup_node;
+                
+                // Use Matrix Lookup
+                double dist = dist_matrix.get(current, pickup);
+                if (dist == numeric_limits<double>::infinity()) {
+                     auto [d, p] = getShortestPath(current, pickup);
+                     dist = d;
+                }
                 
                 if (dist < min_dist) {
                     min_dist = dist;
                     next_node = pickup;
                     is_pickup = true;
-                    selected_order = order_id;
+                    selected_order_idx = order_idx;
                 }
             }
         }
         
         // Option 2: Deliver a picked up order
         // Apply slight bias toward deliveries to reduce carried load
-        for (int order_id : order_ids) {
-            if (picked_up.count(order_id) > 0 && delivered.count(order_id) == 0) {
-                int dropoff = orders[order_id].dropoff_node;
-                auto [dist, path] = getShortestPath(current, dropoff);
+        for (int order_idx : order_indices) {
+            if (picked_up.count(order_idx) > 0 && delivered.count(order_idx) == 0) {
+                int dropoff = orders[order_idx].dropoff_node;
+                
+                // Use Matrix Lookup
+                double dist = dist_matrix.get(current, dropoff);
+                if (dist == numeric_limits<double>::infinity()) {
+                     auto [d, p] = getShortestPath(current, dropoff);
+                     dist = d;
+                }
                 
                 // Bias: prefer deliveries when they're competitive (within 20% of best pickup)
                 double biased_dist = dist * 0.8;
@@ -272,12 +433,12 @@ vector<int> DeliveryScheduler::buildValidRoute(const vector<int>& order_ids, int
                     min_dist = dist;  // Use actual distance for route cost
                     next_node = dropoff;
                     is_pickup = false;
-                    selected_order = order_id;
+                    selected_order_idx = order_idx;
                 }
             }
         }
         
-        if (next_node == -1 || selected_order == -1) {
+        if (next_node == -1 || selected_order_idx == -1) {
             break;  // No valid move (shouldn't happen)
         }
         
@@ -285,9 +446,9 @@ vector<int> DeliveryScheduler::buildValidRoute(const vector<int>& order_ids, int
         current = next_node;
         
         if (is_pickup) {
-            picked_up.insert(selected_order);
+            picked_up.insert(selected_order_idx);
         } else {
-            delivered.insert(selected_order);
+            delivered.insert(selected_order_idx);
         }
     }
     
@@ -324,10 +485,10 @@ SchedulingResult DeliveryScheduler::greedyAssignment() {
         double min_incremental_time = numeric_limits<double>::infinity();
         
         for (int d = 0; d < num_drivers; d++) {
-            vector<int> temp_order_ids = drivers[d].order_ids;
-            temp_order_ids.push_back(order_idx);
+            vector<int> temp_order_indices = drivers[d].assigned_order_indices;
+            temp_order_indices.push_back(order_idx);
             
-            vector<int> temp_route = buildValidRoute(temp_order_ids, depot_node);
+            vector<int> temp_route = buildValidRoute(temp_order_indices, depot_node);
             double new_time = calculateRouteTime(temp_route);
             double incremental = new_time - drivers[d].total_time;
             
@@ -338,8 +499,8 @@ SchedulingResult DeliveryScheduler::greedyAssignment() {
         }
         
         // Assign to best driver
-        drivers[best_driver].order_ids.push_back(order_idx);
-        drivers[best_driver].route = buildValidRoute(drivers[best_driver].order_ids, depot_node);
+        drivers[best_driver].assigned_order_indices.push_back(order_idx);
+        drivers[best_driver].route = buildValidRoute(drivers[best_driver].assigned_order_indices, depot_node);
         drivers[best_driver].total_time = calculateRouteTime(drivers[best_driver].route);
     }
     
@@ -355,7 +516,7 @@ SchedulingResult DeliveryScheduler::greedyAssignment() {
             double new_time = calculateRouteTime(driver.route);
             
             // Validate that optimization didn't break pickup-before-dropoff
-            if (validateRoute(driver.route, driver.order_ids)) {
+            if (validateRoute(driver.route, driver.assigned_order_indices)) {
                 // Keep the improvement
                 driver.total_time = new_time;
             } else {
@@ -386,8 +547,8 @@ double DeliveryScheduler::calculateTotalDeliveryTime(const vector<Driver>& drive
             current_time += time;
             
             // Check if this is a dropoff for any order
-            for (int order_id : driver.order_ids) {
-                if (orders[order_id].dropoff_node == driver.route[i]) {
+            for (int order_idx : driver.assigned_order_indices) {
+                if (orders[order_idx].dropoff_node == driver.route[i]) {
                     total += current_time;
                 }
             }
@@ -513,8 +674,8 @@ SchedulingResult DeliveryScheduler::savingsAlgorithm() {
     vector<Driver> drivers;
     for (size_t i = 0; i < final_routes.size(); i++) {
         Driver driver(i);
-        driver.order_ids = final_routes[i];
-        driver.route = buildValidRoute(driver.order_ids, depot_node);
+        driver.assigned_order_indices = final_routes[i];
+        driver.route = buildValidRoute(driver.assigned_order_indices, depot_node);
         driver.total_time = calculateRouteTime(driver.route);
         drivers.push_back(driver);
     }
@@ -576,23 +737,23 @@ SchedulingResult DeliveryScheduler::perturbSolution(const SchedulingResult& curr
         driver2 = getRandomInt(0, neighbor.assignments.size() - 1);
     }
     
-    if (!neighbor.assignments[driver1].order_ids.empty()) {
-        int order_idx = getRandomInt(0, neighbor.assignments[driver1].order_ids.size() - 1);
-        int order_id = neighbor.assignments[driver1].order_ids[order_idx];
+    if (!neighbor.assignments[driver1].assigned_order_indices.empty()) {
+        int order_idx_in_driver = getRandomInt(0, neighbor.assignments[driver1].assigned_order_indices.size() - 1);
+        int order_idx = neighbor.assignments[driver1].assigned_order_indices[order_idx_in_driver];
         
         // Move order from driver1 to driver2
-        neighbor.assignments[driver1].order_ids.erase(
-            neighbor.assignments[driver1].order_ids.begin() + order_idx);
-        neighbor.assignments[driver2].order_ids.push_back(order_id);
+        neighbor.assignments[driver1].assigned_order_indices.erase(
+            neighbor.assignments[driver1].assigned_order_indices.begin() + order_idx_in_driver);
+        neighbor.assignments[driver2].assigned_order_indices.push_back(order_idx);
         
         // Rebuild routes
         neighbor.assignments[driver1].route = buildValidRoute(
-            neighbor.assignments[driver1].order_ids, depot_node);
+            neighbor.assignments[driver1].assigned_order_indices, depot_node);
         neighbor.assignments[driver1].total_time = calculateRouteTime(
             neighbor.assignments[driver1].route);
         
         neighbor.assignments[driver2].route = buildValidRoute(
-            neighbor.assignments[driver2].order_ids, depot_node);
+            neighbor.assignments[driver2].assigned_order_indices, depot_node);
         neighbor.assignments[driver2].total_time = calculateRouteTime(
             neighbor.assignments[driver2].route);
         
@@ -617,8 +778,15 @@ SchedulingResult DeliveryScheduler::clusterFirstRouteSecond() {
     
     for (int d = 0; d < num_drivers && d < (int)clusters.size(); d++) {
         Driver driver(d);
-        driver.order_ids = clusters[d];
-        driver.route = buildValidRoute(driver.order_ids, depot_node);
+        driver.assigned_order_indices = clusters[d];
+        
+        // Use optimized route building
+        driver.route = buildValidRoute(driver.assigned_order_indices, depot_node);
+        
+        // Apply heavy local search
+        twoOptOptimization(driver.route);
+        orOptMove(driver.route, driver.assigned_order_indices);
+        
         driver.total_time = calculateRouteTime(driver.route);
         drivers.push_back(driver);
     }
@@ -631,36 +799,97 @@ SchedulingResult DeliveryScheduler::clusterFirstRouteSecond() {
 // Simple K-means clustering for orders
 vector<vector<int>> DeliveryScheduler::clusterOrders(int num_clusters) {
     vector<vector<int>> clusters(num_clusters);
-    
     if (orders.empty()) return clusters;
     
-    // Use pickup locations for clustering
-    vector<pair<double, double>> pickup_coords;
-    for (const auto& order : orders) {
-        const Node* node = graph.getNode(order.pickup_node);
-        if (node) {
-            pickup_coords.push_back({node->lat, node->lon});
+    // 1. Initialize centroids (K-Means++)
+    vector<pair<double, double>> centroids;
+    vector<pair<double, double>> points;
+    
+    for(const auto& o : orders) {
+        const Node* p = graph.getNode(o.pickup_node);
+        const Node* d = graph.getNode(o.dropoff_node);
+        if (!p || !d) {
+            points.push_back({0.0, 0.0}); // Should not happen if graph is valid
+            continue;
         }
+        // Use midpoint of pickup and dropoff as the order's location
+        points.push_back({(p->lat + d->lat)/2.0, (p->lon + d->lon)/2.0});
     }
     
-    // Simple spatial assignment based on angle from depot
-    const Node* depot = graph.getNode(depot_node);
-    if (!depot) return clusters;
+    // Pick first centroid randomly
+    int first_idx = getRandomInt(0, points.size()-1);
+    centroids.push_back(points[first_idx]);
     
-    for (size_t i = 0; i < orders.size(); i++) {
-        const Node* pickup = graph.getNode(orders[i].pickup_node);
-        if (!pickup) continue;
+    // Pick remaining centroids
+    for(int k=1; k<num_clusters; ++k) {
+        vector<double> dists(points.size());
+        double sum_dist = 0;
+        for(size_t i=0; i<points.size(); ++i) {
+            double min_d = numeric_limits<double>::infinity();
+            for(const auto& c : centroids) {
+                double d = pow(points[i].first - c.first, 2) + pow(points[i].second - c.second, 2);
+                if(d < min_d) min_d = d;
+            }
+            dists[i] = min_d;
+            sum_dist += min_d;
+        }
         
-        double angle = atan2(pickup->lat - depot->lat, pickup->lon - depot->lon);
-        int cluster_id = (int)((angle + M_PI) / (2 * M_PI) * num_clusters) % num_clusters;
-        clusters[cluster_id].push_back(i);
+        double r = getRandomDouble() * sum_dist;
+        double cum_dist = 0;
+        int next_centroid = -1;
+        for(size_t i=0; i<points.size(); ++i) {
+            cum_dist += dists[i];
+            if(cum_dist >= r) {
+                next_centroid = i;
+                break;
+            }
+        }
+        if(next_centroid == -1) next_centroid = points.size()-1;
+        centroids.push_back(points[next_centroid]);
+    }
+    
+    // 2. K-Means Iterations
+    for(int iter=0; iter<20; ++iter) { // 20 iterations usually enough
+        // Assignment step
+        for(auto& c : clusters) c.clear();
+        
+        for(size_t i=0; i<points.size(); ++i) {
+            int best_c = 0;
+            double min_d = numeric_limits<double>::infinity();
+            for(int k=0; k<num_clusters; ++k) {
+                double d = pow(points[i].first - centroids[k].first, 2) + 
+                           pow(points[i].second - centroids[k].second, 2);
+                if(d < min_d) {
+                    min_d = d;
+                    best_c = k;
+                }
+            }
+            clusters[best_c].push_back(i);
+        }
+        
+        // Update step
+        bool changed = false;
+        for(int k=0; k<num_clusters; ++k) {
+            if(clusters[k].empty()) continue;
+            double sum_lat = 0, sum_lon = 0;
+            for(int idx : clusters[k]) {
+                sum_lat += points[idx].first;
+                sum_lon += points[idx].second;
+            }
+            pair<double, double> new_c = {sum_lat / clusters[k].size(), sum_lon / clusters[k].size()};
+            if(abs(new_c.first - centroids[k].first) > 1e-6 || abs(new_c.second - centroids[k].second) > 1e-6) {
+                centroids[k] = new_c;
+                changed = true;
+            }
+        }
+        if(!changed) break;
     }
     
     return clusters;
 }
 
 // Or-opt move: remove and reinsert a segment
-bool DeliveryScheduler::orOptMove(vector<int>& route, const vector<int>& order_ids) {
+bool DeliveryScheduler::orOptMove(vector<int>& route, const vector<int>& order_indices) {
     if (route.size() < 5) return false;  // Need sufficient nodes
     
     double original_time = calculateRouteTime(route);
@@ -680,7 +909,7 @@ bool DeliveryScheduler::orOptMove(vector<int>& route, const vector<int>& order_i
                 vector<int> new_route = temp_route;
                 new_route.insert(new_route.begin() + j, segment.begin(), segment.end());
                 
-                if (validateRoute(new_route, order_ids)) {
+                if (validateRoute(new_route, order_indices)) {
                     double new_time = calculateRouteTime(new_route);
                     if (new_time < best_time) {
                         best_time = new_time;
@@ -727,7 +956,7 @@ SchedulingResult DeliveryScheduler::adaptiveSchedule() {
         
         // Apply or-opt to each route
         for (auto& driver : result.assignments) {
-            orOptMove(driver.route, driver.order_ids);
+            orOptMove(driver.route, driver.assigned_order_indices);
             driver.total_time = calculateRouteTime(driver.route);
         }
         result.total_delivery_time = calculateTotalDeliveryTime(result.assignments);
@@ -740,7 +969,7 @@ SchedulingResult DeliveryScheduler::adaptiveSchedule() {
         for (auto& driver : result.assignments) {
             if (driver.route.size() > 3) {
                 twoOptOptimization(driver.route);
-                if (validateRoute(driver.route, driver.order_ids)) {
+                if (validateRoute(driver.route, driver.assigned_order_indices)) {
                     driver.total_time = calculateRouteTime(driver.route);
                 }
             }
@@ -779,11 +1008,11 @@ DeliveryScheduler::Individual DeliveryScheduler::createRandomIndividual() {
         int split = (d == num_drivers - 1) ? orders.size() : splits[d];
         
         while (current_order_idx < split) {
-            driver.order_ids.push_back(shuffled_orders[current_order_idx]);
+            driver.assigned_order_indices.push_back(shuffled_orders[current_order_idx]);
             current_order_idx++;
         }
         
-        driver.route = buildValidRoute(driver.order_ids, depot_node);
+        driver.route = buildValidRoute(driver.assigned_order_indices, depot_node);
         driver.total_time = calculateRouteTime(driver.route);
         ind.assignments.push_back(driver);
     }
@@ -799,8 +1028,8 @@ DeliveryScheduler::Individual DeliveryScheduler::crossover(const Individual& par
     
     // 1. Flatten parents into order sequences
     vector<int> p1_orders, p2_orders;
-    for (const auto& d : parent1.assignments) p1_orders.insert(p1_orders.end(), d.order_ids.begin(), d.order_ids.end());
-    for (const auto& d : parent2.assignments) p2_orders.insert(p2_orders.end(), d.order_ids.begin(), d.order_ids.end());
+    for (const auto& d : parent1.assignments) p1_orders.insert(p1_orders.end(), d.assigned_order_indices.begin(), d.assigned_order_indices.end());
+    for (const auto& d : parent2.assignments) p2_orders.insert(p2_orders.end(), d.assigned_order_indices.begin(), d.assigned_order_indices.end());
     
     if (p1_orders.empty()) return parent1;
 
@@ -849,11 +1078,11 @@ DeliveryScheduler::Individual DeliveryScheduler::crossover(const Individual& par
         int split = (d == num_drivers - 1) ? size : splits[d];
         
         while (current_order_idx < split) {
-            driver.order_ids.push_back(child_orders[current_order_idx]);
+            driver.assigned_order_indices.push_back(child_orders[current_order_idx]);
             current_order_idx++;
         }
         
-        driver.route = buildValidRoute(driver.order_ids, depot_node);
+        driver.route = buildValidRoute(driver.assigned_order_indices, depot_node);
         driver.total_time = calculateRouteTime(driver.route);
         child.assignments.push_back(driver);
     }
@@ -873,20 +1102,20 @@ void DeliveryScheduler::mutate(Individual& ind) {
     Driver& d1 = ind.assignments[d1_idx];
     Driver& d2 = ind.assignments[d2_idx];
     
-    if (d1.order_ids.empty() && d2.order_ids.empty()) return;
+    if (d1.assigned_order_indices.empty() && d2.assigned_order_indices.empty()) return;
     
     // Move or Swap
-    if (!d1.order_ids.empty()) {
-        int o1_idx = getRandomInt(0, d1.order_ids.size() - 1);
-        int val = d1.order_ids[o1_idx];
+    if (!d1.assigned_order_indices.empty()) {
+        int o1_idx = getRandomInt(0, d1.assigned_order_indices.size() - 1);
+        int val = d1.assigned_order_indices[o1_idx];
         
-        d1.order_ids.erase(d1.order_ids.begin() + o1_idx);
-        d2.order_ids.push_back(val);
+        d1.assigned_order_indices.erase(d1.assigned_order_indices.begin() + o1_idx);
+        d2.assigned_order_indices.push_back(val);
         
         // Rebuild routes
-        d1.route = buildValidRoute(d1.order_ids, depot_node);
+        d1.route = buildValidRoute(d1.assigned_order_indices, depot_node);
         d1.total_time = calculateRouteTime(d1.route);
-        d2.route = buildValidRoute(d2.order_ids, depot_node);
+        d2.route = buildValidRoute(d2.assigned_order_indices, depot_node);
         d2.total_time = calculateRouteTime(d2.route);
     }
     
@@ -981,7 +1210,7 @@ SchedulingResult DeliveryScheduler::parallelPortfolioSchedule() {
         // Polish with heavy local search
         for (auto& d : res.assignments) {
             twoOptOptimization(d.route);
-            orOptMove(d.route, d.order_ids);
+            orOptMove(d.route, d.assigned_order_indices);
             d.total_time = calculateRouteTime(d.route);
         }
         res.total_delivery_time = calculateTotalDeliveryTime(res.assignments);
@@ -1017,3 +1246,17 @@ SchedulingResult DeliveryScheduler::scheduleMinMax() {
     // For now, use same algorithm - can be extended with load balancing
     return schedule();
 }
+
+// Main entry point for scheduling
+SchedulingResult DeliveryScheduler::scheduleDelivery() {
+    // 1. Build Distance Matrix (Parallel)
+    // This is crucial for performance on large graphs
+    buildDistanceMatrix();
+    
+    // 2. Run Clustering Strategy (Scalable)
+    // For 10k nodes, Genetic Algorithm might be too slow if not highly optimized.
+    // K-Means Clustering + TSP is very fast and gives good results.
+    return clusterFirstRouteSecond();
+}
+
+

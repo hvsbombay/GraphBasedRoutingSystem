@@ -277,5 +277,10 @@ vector<PathInfo> KShortestPaths::findKShortestPathsHeuristic(int source, int tar
         }
     }
     
+    // Sort result by length before returning
+    sort(result.begin(), result.end(), [](const PathInfo& a, const PathInfo& b) {
+        return a.length < b.length;
+    });
+    
     return result;
 }

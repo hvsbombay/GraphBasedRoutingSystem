@@ -1,6 +1,6 @@
 # Graph-Based Routing System - CS293 Project
 
-## Project Status (Updated: Nov 20, 2025)
+## Project Status (Updated: Nov 21, 2025)
 
 ### ✅ All Phases Completed & Optimized
 
@@ -16,7 +16,7 @@
   - K-Shortest Paths (Heuristic) - **Greedy Selection** minimizing (Overlap * Deviation)
   - Approximate Shortest Path - **Bidirectional A* with Dynamic Weighting**
   - Adaptive heuristic weight based on `acceptable_error_pct`
-  - Time-budget aware processing
+  - Time-budget aware processing with explicit timeout responses (Nov 21 hardening)
   - Pre-processing time: ~2ms
 
 - **Phase 3**: FULLY IMPLEMENTED & OPTIMIZED ✅
@@ -25,6 +25,7 @@
   - VRP-based delivery scheduling with multi-driver optimization
   - Pickup-before-dropoff constraints
   - Processing time: Highly optimized for complex queries
+  - Nov 21 update: internal vs external order IDs mapped explicitly to resolve compliance finding
 
 ## Key Changes from Original Specification
 
@@ -47,7 +48,11 @@
 ### Phase 2 Changes
 - **Approximate shortest paths**: Must process queries **one by one**, checking time budget before each query. If budget exceeded, reject remaining queries.
 - **Output field**: Changed from `distance` to `approx_shortest_distance`
-- **Heuristic k-shortest paths**: Uses `overlap_threshold` (percentage) to calculate penalties
+- **Heuristic k-shortest paths**: Uses `overlap_threshold` (percentage) to calculate penalties and now sorts the returned candidates by path length before responding
+
+### Phase 3 Changes (Nov 21, 2025)
+- Delivery scheduler stores **assigned order indices** internally and maps them back to external IDs in the JSON results.
+- Eliminates the ambiguity noted in the compliance report and keeps the JSON contract stable even if external IDs are sparse.
 
 ### Dynamic Edge Updates
 - `remove_edge`: Returns `false` if edge already deleted
@@ -305,6 +310,17 @@ To create additional test cases, modify `tests/generate_testcases.py`.
 - Time-space complexity optimizations
 - Windows & Linux compatible build system
 - Extensive error handling and edge case coverage
+
+## Submission Checklist & Cleanup (per `ProjectChanged2.md`)
+
+The specification explicitly states: *"Don’t provide large JSON files in the submission zip, rather provide just the scripts you used to generate them."* Before zipping the project, keep the generator scripts (e.g., `generate_large_benchmark.py`, `generate_realistic_scenarios.py`) and remove the large artifacts below so the submission stays compliant:
+
+- Benchmark graphs and query sets: `benchmark_graph_*.json`, `benchmark_queries_*.json`
+- Generated outputs and demo fixtures: `output_*.json`, `demo_*.json`, `phase3_test_output.json`
+- Realistic datasets under `tests/`: `tests/test_graph_realistic_*.json`, `tests/test_queries_realistic_*.json`, etc.
+- Temporary verification helpers/results: `verify_phase2_fixes.py`, `tests/output_phase*.json`
+
+Documenting the cleanup list here ensures no bulky JSON slips into the final deliverable.
 
 ## Notes
 

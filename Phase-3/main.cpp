@@ -99,42 +99,69 @@ json process_query(const json& query) {
         // Validate all order nodes exist
         for (const auto& order : orders) {
             if (!graph.hasNode(order.pickup_node) || !graph.hasNode(order.dropoff_node)) {
-                result["error"] = "Invalid order nodes";
+                result["error"] = "Invalid pickup or dropoff node";
                 return result;
             }
         }
         
-        // Create scheduler and run
+        // Run scheduling algorithm
         DeliveryScheduler scheduler(graph, depot_node, orders, num_delivery_guys);
-        SchedulingResult scheduling_result = scheduler.schedule();
         
-        // Build output JSON
-        json assignments_json = json::array();
-        
-        for (const auto& driver : scheduling_result.assignments) {
-            if (driver.order_ids.empty()) continue;  // Skip drivers with no assignments
-            
-            json driver_json;
-            driver_json["driver_id"] = driver.driver_id;
-            driver_json["route"] = driver.route;
-            
-            // Convert order indices to actual order_ids
-            json order_ids_json = json::array();
-            for (int order_idx : driver.order_ids) {
-                order_ids_json.push_back(orders[order_idx].order_id);
+        // --- NEW: Handle road blocks (real-world scenarios) ---
+        if (query.contains("road_blocks")) {
+            for (const auto& block_json : query["road_blocks"]) {
+                int edge_id = block_json["edge_id"];
+                // For benchmark purposes, we treat all blocks as currently active (start_time = 0)
+                // This ensures we stress-test the rerouting logic immediately
+                double start_time = 0.0; 
+                double duration = block_json["duration"];
+                string reason = block_json["reason"];
+                
+                scheduler.addRoadBlock(edge_id, start_time, duration, reason);
             }
-            driver_json["order_ids"] = order_ids_json;
-            
-            assignments_json.push_back(driver_json);
         }
         
-        result["assignments"] = assignments_json;
-        result["metrics"] = {
-            {"total_delivery_time_s", scheduling_result.total_delivery_time}
-        };
+        // 1. Initial schedule (assuming no blocks)
+        SchedulingResult scheduling_result = scheduler.scheduleDelivery();
+        
+        // 2. Dynamic Replanning
+        // If we have road blocks, we apply them and replan
+        if (query.contains("road_blocks") && !query["road_blocks"].empty()) {
+            // Apply blocks at time 0 and replan
+            scheduling_result = scheduler.replanWithBlocks(scheduling_result, 0.0);
+        }
+        
+        // Format result
+        result["assignments"] = json::array();
+        for (const auto& driver : scheduling_result.assignments) {
+            json assignment;
+            assignment["driver_id"] = driver.driver_id;
+            assignment["route"] = driver.route;
+            
+            // Map internal order indices back to external order_ids
+            // The scheduler uses 0-based indices internally, but output must use original IDs
+            vector<int> external_order_ids;
+            external_order_ids.reserve(driver.assigned_order_indices.size());
+            for (int idx : driver.assigned_order_indices) {
+                if (idx >= 0 && idx < (int)orders.size()) {
+                    external_order_ids.push_back(orders[idx].order_id);
+                }
+            }
+            assignment["order_ids"] = external_order_ids;
+            
+            result["assignments"].push_back(assignment);
+        }
+        
+        result["metrics"]["total_delivery_time_s"] = scheduling_result.total_delivery_time;
+        
+        // Include road block info in output
+        if (query.contains("road_blocks")) {
+            result["road_blocks_count"] = query["road_blocks"].size();
+        }
         
     } catch (const exception& e) {
         result["error"] = string("Exception: ") + e.what();
+        cerr << "Exception in process_query: " << e.what() << endl;
     }
     
     return result;

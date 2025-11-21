@@ -150,7 +150,13 @@ json process_query(const json& query) {
                 // Check if we've exceeded the time budget
                 if (elapsed >= time_budget_ms) {
                     // Reject remaining queries - don't process them
-                    break;
+                    json dist_obj;
+                    dist_obj["source"] = source;
+                    dist_obj["target"] = target;
+                    dist_obj["approx_shortest_distance"] = -1.0; // Indicate failure/timeout
+                    dist_obj["status"] = "timeout"; // Explicit status
+                    distances_json.push_back(dist_obj);
+                    continue;
                 }
                 
                 double remaining_time = time_budget_ms - elapsed;
