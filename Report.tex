@@ -480,6 +480,15 @@ Where:
     \item $\alpha$ controls deviation from optimality (default: 0.6)
     \item $\beta$ controls diversity preference (default: 0.4)
     \item $overlap\_penalty$ measures edge overlap with previously selected paths
+    \item $overlap\_threshold$ (input parameter): Percentage value used to calculate penalties from edge overlap ratio
+\end{itemize}
+
+\textbf{Implementation Details:}
+\begin{itemize}
+    \item Input includes \texttt{overlap\_threshold} as percentage (e.g., 30\% means 0.30 ratio)
+    \item Overlap penalty computed as: $penalty = overlap\_ratio \times (1 + overlap\_threshold/100)$
+    \item Results are \textbf{sorted by path length} before returning to client
+    \item Ensures consistent ordering: shortest to longest among diverse paths
 \end{itemize}
 
 \textbf{Algorithm Steps:}
@@ -488,6 +497,7 @@ Where:
     \item For each candidate, compute overlap with already-selected paths
     \item Select path minimizing the combined score
     \item Repeat until K paths selected or candidates exhausted
+    \item \textbf{Sort final K paths by ascending length before output}
 \end{enumerate}
 
 \textbf{Time Complexity}: $O(K^2 \cdot |V|)$ for overlap computation + Yen's overhead
@@ -511,6 +521,15 @@ For batch query performance, we implement landmark-based distance estimation:
     \item Run A* from both source and target simultaneously
     \item Terminate when search frontiers meet
     \item Threshold-based early termination for speed-accuracy tradeoff
+\end{itemize}
+
+\textbf{Batch Processing Strategy:}
+\begin{itemize}
+    \item \textbf{Sequential Processing}: Queries processed \textbf{one by one}, not in parallel
+    \item \textbf{Time Budget Check}: Before each query, check if time budget exceeded
+    \item \textbf{Rejection Policy}: If budget exceeded, reject remaining queries immediately
+    \item \textbf{Output Field}: Results use \texttt{approx\_shortest\_distance} (not \texttt{distance})
+    \item \textbf{Rationale}: One-by-one processing enables early termination and fair resource allocation
 \end{itemize}
 
 \subsubsection{Error Bound Analysis}
@@ -569,6 +588,14 @@ Given error threshold $\epsilon$ (e.g., 5\%):
 \end{enumerate}
 
 \textbf{Justification:} Google Maps shows diverse routes; pure shortest paths often overlap heavily. Diversity penalty encourages variety while maintaining reasonable path lengths.
+
+\textbf{Key Implementation Requirements:}
+\begin{itemize}
+    \item Uses \texttt{overlap\_threshold} parameter from query (percentage value)
+    \item Computes overlap as edge-sharing ratio between paths
+    \item Final candidates \textbf{must be sorted by path length} (ascending order)
+    \item Ensures predictable output ordering for testing and validation
+\end{itemize}
 
 \subsubsection{Query Type 3: Approximate Shortest Paths}
 
